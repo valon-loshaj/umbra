@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react'
+import { useState, useEffect, useRef } from 'react'
 
 import { useConfig } from '../contexts/ConfigContext'
 import { useFileSystem } from '../contexts/FileSystemContext'
@@ -28,19 +28,32 @@ export function MainLayout() {
 	const [showSearch, setShowSearch] = useState(false)
 	const [newFileName, setNewFileName] = useState('')
 
+	// Track which vault we've indexed to detect vault path changes
+	const indexedVaultRef = useRef<string | null>(null)
+
 	// Derive editor content: use local edits if they match current file, otherwise use file content
 	const hasLocalEdits = localEdits !== null && localEdits.file === currentFile
 	const editorContent = hasLocalEdits ? localEdits.content : (currentFileContent ?? '')
 	const isDirty = hasLocalEdits && localEdits.content !== currentFileContent
 
+	// Load file tree and watch directory when vault path is set
 	useEffect(() => {
 		if (config?.vault_path && !fileTree) {
 			loadFileTree(config.vault_path)
 			watchDirectory(config.vault_path)
-			// Index vault on initial load (fire-and-forget)
-			window.electron.vector.indexVault(config.vault_path).catch(console.error)
 		}
 	}, [config, fileTree, loadFileTree, watchDirectory])
+
+	// Index vault when vault path changes (separate effect to avoid re-running on fileTree changes)
+	useEffect(() => {
+		if (!config?.vault_path) return
+
+		// Only index if we haven't indexed this vault yet
+		if (indexedVaultRef.current === config.vault_path) return
+
+		indexedVaultRef.current = config.vault_path
+		window.electron.vector.indexVault(config.vault_path).catch(console.error)
+	}, [config?.vault_path])
 
 	// Cmd/Ctrl+K to open search
 	useEffect(() => {

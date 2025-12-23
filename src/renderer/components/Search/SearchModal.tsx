@@ -2,10 +2,48 @@ import { useState, useEffect, useRef, useCallback } from 'react'
 
 import { SearchResult } from '../../../shared/types'
 import { useConfig } from '../../contexts/ConfigContext'
+import { useDebouncedValue } from '../../hooks/useDebouncedValue'
 
 interface SearchModalProps {
 	onClose: () => void
 	onSelect: (path: string) => void
+}
+
+/** Cross-platform path separator regex */
+const PATH_SEPARATOR = /[/\\]/
+
+/**
+ * Extract filename from a path (works on both Windows and Unix)
+ */
+function getFileName(filePath: string): string {
+	const parts = filePath.split(PATH_SEPARATOR)
+	return parts[parts.length - 1] || filePath
+}
+
+/**
+ * Convert absolute path to relative path from vault root
+ */
+function toRelativePath(filePath: string, vaultPath: string): string {
+	if (!vaultPath) return filePath
+
+	// Normalize separators for comparison
+	const normalizedFile = filePath.replace(/\\/g, '/')
+	const normalizedVault = vaultPath.replace(/\\/g, '/')
+
+	if (normalizedFile.startsWith(normalizedVault)) {
+		return normalizedFile.slice(normalizedVault.length).replace(/^\//, '')
+	}
+	return filePath
+}
+
+/**
+ * Convert distance score to relevance percentage (0-100)
+ * LanceDB returns L2 distance where lower = more similar
+ */
+function scoreToRelevance(distance: number): number {
+	// Clamp and invert: distance 0 = 100%, distance 2+ = 0%
+	const clamped = Math.min(Math.max(distance, 0), 2)
+	return Math.round((1 - clamped / 2) * 100)
 }
 
 export function SearchModal({ onClose, onSelect }: SearchModalProps) {
@@ -15,7 +53,8 @@ export function SearchModal({ onClose, onSelect }: SearchModalProps) {
 	const [isSearching, setIsSearching] = useState(false)
 	const [selectedIndex, setSelectedIndex] = useState(0)
 	const inputRef = useRef<HTMLInputElement>(null)
-	const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null)
+
+	const debouncedQuery = useDebouncedValue(query)
 
 	const search = useCallback(async (searchQuery: string) => {
 		if (!config?.vault_path || !searchQuery.trim()) {
@@ -26,7 +65,18 @@ export function SearchModal({ onClose, onSelect }: SearchModalProps) {
 		setIsSearching(true)
 		try {
 			const searchResults = await window.electron.vector.search(searchQuery, config.vault_path, 10)
-			setResults(searchResults)
+
+			// Deduplicate results by path (keep first occurrence)
+			const seen = new Set<string>()
+			const uniqueResults = searchResults.filter(result => {
+				if (seen.has(result.path)) {
+					return false
+				}
+				seen.add(result.path)
+				return true
+			})
+
+			setResults(uniqueResults)
 			setSelectedIndex(0)
 		} catch (error) {
 			console.error('Search failed:', error)
@@ -41,20 +91,8 @@ export function SearchModal({ onClose, onSelect }: SearchModalProps) {
 	}, [])
 
 	useEffect(() => {
-		if (debounceRef.current) {
-			clearTimeout(debounceRef.current)
-		}
-
-		debounceRef.current = setTimeout(() => {
-			search(query)
-		}, 300)
-
-		return () => {
-			if (debounceRef.current) {
-				clearTimeout(debounceRef.current)
-			}
-		}
-	}, [query, search])
+		search(debouncedQuery)
+	}, [debouncedQuery, search])
 
 	const handleKeyDown = (e: React.KeyboardEvent) => {
 		switch (e.key) {
@@ -77,16 +115,6 @@ export function SearchModal({ onClose, onSelect }: SearchModalProps) {
 				}
 				break
 		}
-	}
-
-	const getFileName = (filePath: string): string => {
-		const parts = filePath.split('/')
-		return parts[parts.length - 1] || filePath
-	}
-
-	const getRelativePath = (filePath: string): string => {
-		if (!config?.vault_path) return filePath
-		return filePath.replace(config.vault_path, '').replace(/^\//, '')
 	}
 
 	return (
@@ -124,8 +152,13 @@ export function SearchModal({ onClose, onSelect }: SearchModalProps) {
 							}}
 							onMouseEnter={() => setSelectedIndex(index)}
 						>
-							<span className="search-modal__result-name">{getFileName(result.path)}</span>
-							<span className="search-modal__result-path">{getRelativePath(result.path)}</span>
+							<div className="search-modal__result-header">
+								<span className="search-modal__result-name">{getFileName(result.path)}</span>
+								<span className="search-modal__result-score">{scoreToRelevance(result.score)}%</span>
+							</div>
+							<span className="search-modal__result-path">
+								{toRelativePath(result.path, config?.vault_path ?? '')}
+							</span>
 						</button>
 					))}
 				</div>

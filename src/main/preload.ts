@@ -20,6 +20,7 @@ export type Channels
 		| 'vector:embed-file'
 		| 'vector:search'
 		| 'vector:index-vault'
+		| 'vector:remove'
 
 const electronHandler = {
 	config: {
@@ -59,7 +60,9 @@ const electronHandler = {
 		search: (query: string, vaultPath: string, limit?: number) =>
 			ipcRenderer.invoke('vector:search', query, vaultPath, limit) as Promise<SearchResult[]>,
 		indexVault: (vaultPath: string) =>
-			ipcRenderer.invoke('vector:index-vault', vaultPath) as Promise<void>,
+			ipcRenderer.invoke('vector:index-vault', vaultPath) as Promise<{ indexed: number; removed: number }>,
+		remove: (filePath: string, vaultPath: string) =>
+			ipcRenderer.invoke('vector:remove', filePath, vaultPath) as Promise<void>,
 	},
 }
 

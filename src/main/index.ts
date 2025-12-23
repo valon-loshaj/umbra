@@ -7,7 +7,7 @@ import { AppConfig } from '../shared/types'
 
 import { configService } from './services/ConfigService'
 import { fileSystemService } from './services/FileSystemService'
-// import { vectorService } from './services/VectorService'
+import { vectorService } from './services/VectorService'
 
 if (started) {
 	app.quit()
@@ -92,20 +92,20 @@ function setupIpcHandlers(mainWindow: BrowserWindow) {
 		fileSystemService.unwatchDirectory(dirPath)
 	})
 
-	ipcMain.handle('vector:embed-file', async (_event, _filePath: string, _content: string, _vaultPath: string) => {
-		// TODO: Re-enable after fixing native module loading
-		// await vectorService.embedFile(filePath, content, vaultPath)
+	ipcMain.handle('vector:embed-file', async (_event, filePath: string, content: string, vaultPath: string) => {
+		await vectorService.embedFile(filePath, content, vaultPath)
 	})
 
-	ipcMain.handle('vector:search', async (_event, _query: string, _vaultPath: string, _limit?: number) => {
-		// TODO: Re-enable after fixing native module loading
-		// return await vectorService.search(query, vaultPath, limit ?? 10)
-		return []
+	ipcMain.handle('vector:search', async (_event, query: string, vaultPath: string, limit?: number) => {
+		return await vectorService.search(query, vaultPath, limit ?? 10)
 	})
 
-	ipcMain.handle('vector:index-vault', async (_event, _vaultPath: string) => {
-		// TODO: Re-enable after fixing native module loading
-		// await vectorService.indexVault(vaultPath)
+	ipcMain.handle('vector:index-vault', async (_event, vaultPath: string) => {
+		return await vectorService.indexVault(vaultPath)
+	})
+
+	ipcMain.handle('vector:remove', async (_event, filePath: string, vaultPath: string) => {
+		await vectorService.removeVector(filePath, vaultPath)
 	})
 }
 
