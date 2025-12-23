@@ -1,0 +1,52 @@
+/**
+ * File Tree Styles
+ * File browser tree items.
+ */
+
+.file-tree-item {
+  padding: var(--space-1) var(--space-2);
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  font-size: var(--font-size-sm);
+  color: var(--color-text-primary);
+  border-radius: var(--radius-sm);
+  margin: 1px var(--space-1);
+  transition: background-color var(--transition-fast);
+}
+
+.file-tree-item:hover {
+  background-color: rgba(0, 0, 0, 0.04);
+}
+
+.file-tree-item--selected {
+  background-color: var(--color-interactive);
+  color: var(--color-text-inverse);
+}
+
+.file-tree-item--selected:hover {
+  background-color: var(--color-interactive-hover);
+}
+
+.file-tree-item__icon {
+  margin-right: var(--space-2);
+  font-size: var(--font-size-xs);
+  flex-shrink: 0;
+  opacity: 0.7;
+}
+
+.file-tree-item--selected .file-tree-item__icon {
+  opacity: 1;
+}
+
+.file-tree-item__name {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* === Nested Children Container === */
+.file-tree-children {
+  margin-left: var(--space-1);
+  border-left: 1px solid var(--color-border-light);
+}

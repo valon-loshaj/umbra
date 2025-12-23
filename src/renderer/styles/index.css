@@ -1,0 +1,24 @@
+/**
+ * Umbra Notes - Main Stylesheet
+ *
+ * Import order:
+ * 1. Tokens (design system variables)
+ * 2. Electron (Chromium-specific resets and behaviors)
+ * 3. Base (shared patterns)
+ * 4. Components (modular component styles)
+ */
+
+/* Foundation */
+@import './tokens.css';
+@import './electron.css';
+@import './base.css';
+
+/* Components */
+@import './components/layout.css';
+@import './components/button.css';
+@import './components/input.css';
+@import './components/modal.css';
+@import './components/sidebar.css';
+@import './components/file-tree.css';
+@import './components/editor.css';
+@import './components/search.css';

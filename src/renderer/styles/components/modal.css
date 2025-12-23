@@ -1,0 +1,66 @@
+/**
+ * Modal Styles
+ * Overlay dialogs and panels.
+ */
+
+.modal-overlay {
+  position: fixed;
+  inset: 0;
+  background-color: var(--color-bg-overlay);
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  z-index: var(--z-modal);
+}
+
+/* === Base Modal Container === */
+.modal {
+  background-color: var(--color-bg-primary);
+  border-radius: var(--radius-lg);
+  box-shadow: var(--shadow-lg);
+}
+
+/* === Size Variants === */
+
+/* Standard modal with header/content structure */
+.modal--md {
+  width: 500px;
+  max-width: 90vw;
+  max-height: 85vh;
+  overflow: hidden;
+  display: flex;
+  flex-direction: column;
+}
+
+/* Compact modal for simple prompts */
+.modal--compact {
+  width: 320px;
+  padding: var(--space-5);
+}
+
+/* === Modal Structure === */
+
+.modal__header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: var(--space-4) var(--space-5);
+  border-bottom: 1px solid var(--color-border-light);
+}
+
+.modal__title {
+  margin: 0;
+  font-size: var(--font-size-lg);
+  font-weight: var(--font-weight-semibold);
+}
+
+/* Smaller title for compact modals */
+.modal--compact .modal__title {
+  font-size: var(--font-size-base);
+  margin-bottom: var(--space-4);
+}
+
+.modal__content {
+  padding: var(--space-5);
+  overflow-y: auto;
+}

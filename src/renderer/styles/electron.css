@@ -1,0 +1,110 @@
+/**
+ * Electron Environment Styles
+ * Chromium-specific resets and desktop app behaviors.
+ * No browser fallbacks needed - Electron uses Chromium exclusively.
+ */
+
+/* === Reset === */
+*,
+*::before,
+*::after {
+  box-sizing: border-box;
+  margin: 0;
+  padding: 0;
+}
+
+/* === Root Element === */
+html {
+  font-size: var(--font-size-base);
+  -webkit-font-smoothing: antialiased;
+  text-rendering: optimizeLegibility;
+
+  /* Prevent rubber-banding/bounce on macOS */
+  overscroll-behavior: none;
+}
+
+body {
+  font-family: var(--font-family-base);
+  font-size: var(--font-size-base);
+  line-height: var(--line-height-base);
+  color: var(--color-text-primary);
+  background-color: var(--color-bg-app);
+
+  /* Prevent accidental text selection during UI interactions */
+  user-select: none;
+
+  /* Prevent overscroll bounce */
+  overscroll-behavior: none;
+  overflow: hidden;
+}
+
+/* === Allow text selection in content areas === */
+input,
+textarea,
+[contenteditable="true"] {
+  user-select: text;
+}
+
+/* === Typography Reset === */
+h1, h2, h3, h4, h5, h6 {
+  font-weight: var(--font-weight-semibold);
+  line-height: var(--line-height-tight);
+}
+
+a {
+  color: inherit;
+  text-decoration: none;
+}
+
+/* === Form Elements === */
+button {
+  font-family: inherit;
+  font-size: inherit;
+  border: none;
+  background: none;
+  cursor: pointer;
+}
+
+input, textarea, select {
+  font-family: inherit;
+  font-size: inherit;
+}
+
+ul, ol {
+  list-style: none;
+}
+
+/* === Focus States === */
+:focus {
+  outline: none;
+}
+
+:focus-visible {
+  outline: 2px solid var(--color-focus-ring);
+  outline-offset: 1px;
+}
+
+/* === Custom Scrollbars (Chromium) === */
+::-webkit-scrollbar {
+  width: var(--scrollbar-width);
+  height: var(--scrollbar-width);
+}
+
+::-webkit-scrollbar-track {
+  background: var(--color-scrollbar-track);
+}
+
+::-webkit-scrollbar-thumb {
+  background: var(--color-scrollbar-thumb);
+  border-radius: var(--radius-sm);
+}
+
+::-webkit-scrollbar-thumb:hover {
+  background: var(--color-scrollbar-thumb-hover);
+}
+
+/* === Selection Color === */
+::selection {
+  background-color: var(--color-interactive);
+  color: var(--color-text-inverse);
+}
