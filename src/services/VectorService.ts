@@ -1,7 +1,6 @@
 import { createHash } from 'crypto';
+import { createRequire } from 'module';
 import { normalizePath, TFile, Vault } from 'obsidian';
-import * as lancedb from '@lancedb/lancedb';
-import { pipeline, FeatureExtractionPipeline } from '@xenova/transformers';
 
 import { NoteVector, NoteVectorQueryResult, SearchResult, IndexStats } from '../types';
 
@@ -19,24 +18,61 @@ interface EmbeddingOutput {
 	data: Float32Array;
 }
 
-type Connection = Awaited<ReturnType<typeof lancedb.connect>>;
-type Table = Awaited<ReturnType<Connection['openTable']>>;
+// Lazy-loaded module types
+type LanceDbModule = any;
+type TransformersModule = any;
+type Connection = any;
+type Table = any;
+type FeatureExtractionPipeline = any;
 
 export class VectorService {
 	private vault: Vault;
 	private dataDir: string;
+	private pluginDir: string;
+	private pluginRequire: NodeRequire | null = null;
+	private lancedb: LanceDbModule | null = null;
+	private transformers: TransformersModule | null = null;
 	private db: Connection | null = null;
 	private table: Table | null = null;
 	private embeddingPipeline: FeatureExtractionPipeline | null = null;
 	private initError: Error | null = null;
 
-	constructor(vault: Vault, dataDir: string) {
+	constructor(vault: Vault, dataDir: string, pluginDir: string) {
 		this.vault = vault;
-		this.dataDir = normalizePath(dataDir);
+		this.dataDir = dataDir;
+		this.pluginDir = pluginDir;
+
+		// Create a require function that resolves modules from the plugin directory
+		try {
+			// Create a fake module path in the plugin directory for createRequire
+			const fakePath = `${pluginDir}/package.json`;
+			this.pluginRequire = createRequire(fakePath);
+			console.log('Created plugin require from:', fakePath);
+		} catch (error) {
+			console.error('Failed to create plugin require:', error);
+			this.initError = error as Error;
+		}
+	}
+
+	private async getLanceDb(): Promise<LanceDbModule> {
+		if (!this.lancedb && this.pluginRequire) {
+			console.log('Loading LanceDB with plugin require...');
+			this.lancedb = this.pluginRequire('@lancedb/lancedb');
+		}
+		return this.lancedb;
+	}
+
+	private async getTransformers(): Promise<TransformersModule> {
+		if (!this.transformers && this.pluginRequire) {
+			console.log('Loading Transformers.js with plugin require...');
+			this.transformers = this.pluginRequire('@xenova/transformers');
+		}
+		return this.transformers;
 	}
 
 	private async getDb(): Promise<Connection> {
 		if (!this.db) {
+			const lancedb = await this.getLanceDb();
 			this.db = await lancedb.connect(this.dataDir);
 		}
 		return this.db;
@@ -68,7 +104,8 @@ export class VectorService {
 
 	private async getPipeline(): Promise<FeatureExtractionPipeline> {
 		if (!this.embeddingPipeline) {
-			this.embeddingPipeline = await pipeline('feature-extraction', EMBEDDING_MODEL) as FeatureExtractionPipeline;
+			const transformers = await this.getTransformers();
+			this.embeddingPipeline = await transformers.pipeline('feature-extraction', EMBEDDING_MODEL);
 		}
 		return this.embeddingPipeline;
 	}
