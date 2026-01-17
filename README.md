@@ -54,7 +54,10 @@ cp -r node_modules/@xenova /path/to/your-vault/.obsidian/plugins/umbra/node_modu
 
 3. Enable the plugin in Obsidian: Settings → Community plugins → Enable "Umbra"
 
-4. Test the vector service: Open command palette (Cmd/Ctrl+P) and run "Umbra: Test Vector Service"
+4. Test the plugin:
+   - Run "Umbra: Test Vector Service" to index your vault
+   - Press Cmd/Ctrl+K (or use command palette) to open search
+   - Type to search, use arrow keys to navigate, Enter to open
 
 **Alternative: Use a symlink for faster development**
 
@@ -72,8 +75,10 @@ umbra/
 ├── src/
 │   ├── main.ts                    # Plugin entry point
 │   ├── types.ts                   # Type definitions
-│   └── services/
-│       └── VectorService.ts       # Vector search implementation
+│   ├── services/
+│   │   └── VectorService.ts       # Vector search implementation
+│   └── ui/
+│       └── SearchModal.ts         # Search modal component
 ├── manifest.json                  # Plugin metadata
 ├── styles.css                     # Plugin styles
 ├── esbuild.config.mjs             # Build configuration
@@ -94,10 +99,11 @@ umbra/
 - Vault API integration
 - Test command to verify indexing works
 
-### Phase 3: Search Functionality
-- Search modal UI
-- Keyboard navigation
-- Command palette integration
+### Phase 3: Search Functionality ✓
+- Search modal UI with debounced search
+- Keyboard navigation (arrows, Enter, Esc)
+- Command: "Umbra: Search notes" with Cmd/Ctrl+K hotkey
+- Open in current pane (default) or new pane (Cmd/Ctrl held)
 
 ### Phase 4: Auto-Indexing
 - Index on vault open
