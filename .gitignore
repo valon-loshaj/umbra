@@ -91,6 +91,11 @@ typings/
 # Electron-Forge
 out/
 
+# Obsidian plugin build
+main.js
+main.js.map
+*.js.map
+
 # Editor
 .editorconfig
 .cursor
