@@ -1,23 +1,19 @@
 {
   "compilerOptions": {
-    "target": "ESNext",
-    "lib": ["ESNext", "DOM", "DOM.Iterable"],
-    "module": "ESNext",
-    "moduleResolution": "bundler",
-    "jsx": "react-jsx",
-    "allowJs": true,
-    "skipLibCheck": true,
-    "esModuleInterop": true,
-    "noImplicitAny": true,
-    "sourceMap": true,
     "baseUrl": ".",
-    "outDir": "dist",
-    "resolveJsonModule": true,
-    "strict": true,
-    "paths": {
-      "@shared/*": ["./src/shared/*"]
-    }
+    "inlineSourceMap": true,
+    "inlineSources": true,
+    "module": "ESNext",
+    "target": "ES6",
+    "allowJs": true,
+    "noImplicitAny": true,
+    "moduleResolution": "node",
+    "importHelpers": true,
+    "isolatedModules": true,
+    "strictNullChecks": true,
+    "lib": ["DOM", "ES5", "ES6", "ES7"],
+    "skipLibCheck": true,
+    "types": ["node"]
   },
-  "include": ["src/**/*"],
-  "exclude": ["node_modules", "dist", ".vite"]
+  "include": ["src/**/*.ts"]
 }
