@@ -36,34 +36,47 @@ npm run dev
 
 ### Testing in Obsidian
 
-**Option 1: Use the included test vault**
+To test the plugin during development:
 
-The test vault is located at `.beads/temp-docs/vault/`.
+1. Build the plugin:
+```bash
+npm run build
+```
 
-1. Build the plugin: `npm run build`
-2. Copy files to test vault: `cp main.js manifest.json styles.css .beads/temp-docs/vault/.obsidian/plugins/umbra/`
-3. Open `.beads/temp-docs/vault/` as a vault in Obsidian
-4. Enable the plugin in Settings → Community plugins
+2. Copy the plugin files to your vault's plugin directory:
+```bash
+mkdir -p /path/to/your-vault/.obsidian/plugins/umbra
+cp main.js manifest.json styles.css /path/to/your-vault/.obsidian/plugins/umbra/
+# Also copy node_modules for native dependencies:
+cp -r node_modules/@lancedb /path/to/your-vault/.obsidian/plugins/umbra/node_modules/
+cp -r node_modules/@xenova /path/to/your-vault/.obsidian/plugins/umbra/node_modules/
+```
 
-**Option 2: Link to your own vault**
+3. Enable the plugin in Obsidian: Settings → Community plugins → Enable "Umbra"
 
-1. Build the plugin: `npm run build`
-2. Create a symlink from your vault's plugin directory to this project:
+4. Test the vector service: Open command palette (Cmd/Ctrl+P) and run "Umbra: Test Vector Service"
+
+**Alternative: Use a symlink for faster development**
+
+Create a symlink from your vault's plugin directory to this project:
 ```bash
 ln -s /path/to/umbra /path/to/your-vault/.obsidian/plugins/umbra
 ```
-3. Enable the plugin in Obsidian settings
+
+Then just run `npm run dev` and Obsidian will reload on changes.
 
 ### Project Structure
 
 ```
 umbra/
 ├── src/
-│   └── main.ts              # Plugin entry point
-├── archive/                 # Original Electron app (archived)
-├── manifest.json            # Plugin metadata
-├── styles.css               # Plugin styles
-├── esbuild.config.mjs       # Build configuration
+│   ├── main.ts                    # Plugin entry point
+│   ├── types.ts                   # Type definitions
+│   └── services/
+│       └── VectorService.ts       # Vector search implementation
+├── manifest.json                  # Plugin metadata
+├── styles.css                     # Plugin styles
+├── esbuild.config.mjs             # Build configuration
 ├── package.json
 └── tsconfig.json
 ```
@@ -75,10 +88,11 @@ umbra/
 - Build configuration
 - Loads in Obsidian
 
-### Phase 2: Vector Service
+### Phase 2: Vector Service ✓
 - Port VectorService from Electron app
 - LanceDB + Transformers.js integration
 - Vault API integration
+- Test command to verify indexing works
 
 ### Phase 3: Search Functionality
 - Search modal UI

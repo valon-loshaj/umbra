@@ -96,6 +96,10 @@ main.js
 main.js.map
 *.js.map
 
+# Local development scripts (not part of repo)
+deploy-test.sh
+*.local.sh
+
 # Editor
 .editorconfig
 .cursor
