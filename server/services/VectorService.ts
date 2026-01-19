@@ -30,16 +30,32 @@ type FeatureExtractionPipeline = Awaited<ReturnType<TransformersModule['pipeline
 const nativeRequire = createRequire(__filename);
 
 export class VectorService {
-	private dataDir: string;
+	private baseDataDir: string;
 	private lancedb: LanceDbModule | null = null;
 	private transformers: TransformersModule | null = null;
-	private db: Connection | null = null;
-	private table: Table | null = null;
+	// Store per-vault database connections and tables
+	private vaultDbs: Map<string, Connection> = new Map();
+	private vaultTables: Map<string, Table> = new Map();
 	private embeddingPipeline: FeatureExtractionPipeline | null = null;
 	private initError: Error | null = null;
 
-	constructor(dataDir: string) {
-		this.dataDir = dataDir;
+	constructor(baseDataDir: string) {
+		this.baseDataDir = baseDataDir;
+	}
+
+	/**
+	 * Create a vault-specific hash for namespacing
+	 */
+	private getVaultHash(vaultPath: string): string {
+		return createHash('sha256').update(vaultPath).digest('hex').substring(0, 16);
+	}
+
+	/**
+	 * Get the data directory for a specific vault
+	 */
+	private getVaultDataDir(vaultPath: string): string {
+		const vaultHash = this.getVaultHash(vaultPath);
+		return path.join(this.baseDataDir, vaultHash);
 	}
 
 	private getLanceDb(): LanceDbModule {
@@ -58,23 +74,31 @@ export class VectorService {
 		return this.transformers;
 	}
 
-	private async getDb(): Promise<Connection> {
-		if (!this.db) {
+	private async getDb(vaultPath: string): Promise<Connection> {
+		const vaultHash = this.getVaultHash(vaultPath);
+
+		if (!this.vaultDbs.has(vaultHash)) {
 			const lancedb = this.getLanceDb();
-			await fs.mkdir(this.dataDir, { recursive: true });
-			console.log('Connecting to LanceDB at:', this.dataDir);
-			this.db = await lancedb.connect(this.dataDir);
+			const vaultDataDir = this.getVaultDataDir(vaultPath);
+			await fs.mkdir(vaultDataDir, { recursive: true });
+			console.log(`Connecting to LanceDB for vault ${vaultHash} at:`, vaultDataDir);
+			const db = await lancedb.connect(vaultDataDir);
+			this.vaultDbs.set(vaultHash, db);
 		}
-		return this.db;
+
+		return this.vaultDbs.get(vaultHash)!;
 	}
 
-	private async getTable(): Promise<Table> {
-		if (!this.table) {
-			const db = await this.getDb();
+	private async getTable(vaultPath: string): Promise<Table> {
+		const vaultHash = this.getVaultHash(vaultPath);
+
+		if (!this.vaultTables.has(vaultHash)) {
+			const db = await this.getDb(vaultPath);
 			const tableNames = await db.tableNames();
 
+			let table: Table;
 			if (tableNames.includes(TABLE_NAME)) {
-				this.table = await db.openTable(TABLE_NAME);
+				table = await db.openTable(TABLE_NAME);
 			} else {
 				// Create table with explicit schema using a sample record
 				const schemaRecord: NoteVector = {
@@ -84,12 +108,15 @@ export class VectorService {
 					content_hash: '',
 					last_updated: 0,
 				};
-				this.table = await db.createTable(TABLE_NAME, [schemaRecord]);
+				table = await db.createTable(TABLE_NAME, [schemaRecord]);
 				// Remove the schema placeholder
-				await this.table.delete('id = "__schema__"');
+				await table.delete('id = "__schema__"');
 			}
+
+			this.vaultTables.set(vaultHash, table);
 		}
-		return this.table;
+
+		return this.vaultTables.get(vaultHash)!;
 	}
 
 	private async getPipeline(): Promise<FeatureExtractionPipeline> {
@@ -114,12 +141,24 @@ export class VectorService {
 		return createHash('sha256').update(content).digest('hex');
 	}
 
+	/**
+	 * Convert absolute file path to vault-relative path with forward slashes
+	 * (Obsidian API expects forward slashes regardless of OS)
+	 */
 	private toRelativePath(filePath: string, vaultPath: string): string {
-		return path.relative(vaultPath, filePath);
+		const relative = path.relative(vaultPath, filePath);
+		// Normalize to forward slashes for cross-platform compatibility
+		return relative.split(path.sep).join('/');
 	}
 
+	/**
+	 * Convert vault-relative path to absolute path
+	 * (handles both forward and backslashes)
+	 */
 	private toAbsolutePath(relativePath: string, vaultPath: string): string {
-		return path.join(vaultPath, relativePath);
+		// Normalize vault-relative path to OS-specific separators
+		const normalized = relativePath.split('/').join(path.sep);
+		return path.join(vaultPath, normalized);
 	}
 
 	/**
@@ -154,7 +193,7 @@ export class VectorService {
 	 * Skips unchanged files based on content hash.
 	 */
 	async embedFile(filePath: string, content: string, vaultPath: string): Promise<void> {
-		const table = await this.getTable();
+		const table = await this.getTable(vaultPath);
 		const relativePath = this.toRelativePath(filePath, vaultPath);
 		const contentHash = this.hashContent(content);
 		const id = this.hashContent(relativePath);
@@ -181,11 +220,12 @@ export class VectorService {
 
 	/**
 	 * Search for notes semantically similar to the query.
+	 * Returns vault-relative paths with forward slashes (as Obsidian expects).
 	 * Returns empty array on error (graceful degradation).
 	 */
 	async search(query: string, vaultPath: string, limit = 10): Promise<SearchResult[]> {
 		try {
-			const table = await this.getTable();
+			const table = await this.getTable(vaultPath);
 			const queryVector = await this.embed(query);
 
 			const results = await table
@@ -193,8 +233,9 @@ export class VectorService {
 				.limit(limit)
 				.toArray() as NoteVectorQueryResult[];
 
+			// Return vault-relative paths (already stored with forward slashes)
 			return results.map((row) => ({
-				path: this.toAbsolutePath(row.path, vaultPath),
+				path: row.path,
 				score: row._distance,
 			}));
 		} catch (error) {
@@ -208,7 +249,7 @@ export class VectorService {
 	 * Also cleans up stale vectors for deleted files.
 	 */
 	async indexVault(vaultPath: string, excludeFolders: string[] = []): Promise<IndexStats> {
-		const table = await this.getTable();
+		const table = await this.getTable(vaultPath);
 		const files = await this.getMarkdownFiles(vaultPath, excludeFolders);
 
 		// Build set of current file IDs
@@ -248,7 +289,7 @@ export class VectorService {
 	 * Remove a single file's vector from the database.
 	 */
 	async removeVector(filePath: string, vaultPath: string): Promise<void> {
-		const table = await this.getTable();
+		const table = await this.getTable(vaultPath);
 		const relativePath = this.toRelativePath(filePath, vaultPath);
 		const id = this.hashContent(relativePath);
 		await this.deleteById(table, id);
@@ -256,9 +297,17 @@ export class VectorService {
 
 	/**
 	 * Get all markdown files in a directory, respecting exclude folders.
+	 * Uses segment-aware matching to avoid false positives.
 	 */
-	private async getMarkdownFiles(dir: string, excludeFolders: string[] = []): Promise<string[]> {
+	private async getMarkdownFiles(dir: string, excludeFolders: string[] = [], vaultPath?: string): Promise<string[]> {
 		const files: string[] = [];
+		const actualVaultPath = vaultPath || dir;
+
+		// Normalize exclude folders to forward-slash separated segments
+		const normalizedExcludes = excludeFolders.map(folder => {
+			// Remove leading/trailing slashes and normalize to forward slashes
+			return folder.replace(/^\/+|\/+$/g, '').split(path.sep).join('/');
+		});
 
 		try {
 			const entries = await fs.readdir(dir, { withFileTypes: true });
@@ -269,16 +318,33 @@ export class VectorService {
 
 				const fullPath = path.join(dir, entry.name);
 
-				// Check if this path should be excluded
-				const shouldExclude = excludeFolders.some(folder => {
-					const normalizedFolder = path.normalize(folder);
-					return fullPath.includes(normalizedFolder);
+				// Convert to vault-relative path with forward slashes for comparison
+				const relativePath = this.toRelativePath(fullPath, actualVaultPath);
+				const pathSegments = relativePath.split('/');
+
+				// Check if this path should be excluded using segment-aware matching
+				const shouldExclude = normalizedExcludes.some(excludeFolder => {
+					const excludeSegments = excludeFolder.split('/');
+
+					// Check if the exclude folder matches as a prefix of the path
+					if (excludeSegments.length > pathSegments.length) {
+						return false;
+					}
+
+					// Match each segment
+					for (let i = 0; i < excludeSegments.length; i++) {
+						if (excludeSegments[i] !== pathSegments[i]) {
+							return false;
+						}
+					}
+
+					return true;
 				});
 
 				if (shouldExclude) continue;
 
 				if (entry.isDirectory()) {
-					const nested = await this.getMarkdownFiles(fullPath, excludeFolders);
+					const nested = await this.getMarkdownFiles(fullPath, excludeFolders, actualVaultPath);
 					files.push(...nested);
 				} else if (entry.isFile() && entry.name.endsWith('.md')) {
 					files.push(fullPath);
@@ -295,8 +361,8 @@ export class VectorService {
 	 * Close database connections
 	 */
 	async close(): Promise<void> {
-		this.db = null;
-		this.table = null;
+		this.vaultDbs.clear();
+		this.vaultTables.clear();
 		this.embeddingPipeline = null;
 	}
 }

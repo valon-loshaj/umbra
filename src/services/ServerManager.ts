@@ -1,6 +1,7 @@
 import { ChildProcess, spawn, execSync } from 'child_process';
 import { existsSync } from 'fs';
 import { Notice } from 'obsidian';
+import { randomBytes } from 'crypto';
 
 const SERVER_PORT = 37240;
 const SERVER_URL = `http://localhost:${SERVER_PORT}`;
@@ -12,10 +13,25 @@ export class ServerManager {
 	private pluginDir: string;
 	private isStarting: boolean = false;
 	private nodePath: string | null = null;
+	private authToken: string | null = null;
 
 	constructor(pluginDir: string) {
 		this.pluginDir = pluginDir;
 		this.nodePath = this.findNodePath();
+	}
+
+	/**
+	 * Generate a random auth token for this session
+	 */
+	private generateAuthToken(): string {
+		return randomBytes(32).toString('hex');
+	}
+
+	/**
+	 * Get the current auth token (for use by ApiClient)
+	 */
+	getAuthToken(): string | null {
+		return this.authToken;
 	}
 
 	/**
@@ -125,6 +141,10 @@ export class ServerManager {
 		}
 
 		try {
+			// Generate auth token for this session
+			this.authToken = this.generateAuthToken();
+			console.log('Generated auth token for server session');
+
 			// Path to server entry point
 			const serverPath = `${this.pluginDir}/server`;
 			const serverScript = `${serverPath}/dist/index.js`;
@@ -139,7 +159,11 @@ export class ServerManager {
 				{
 					cwd: serverPath,
 					detached: false,
-					stdio: ['ignore', 'pipe', 'pipe'],
+					stdio: ['pipe', 'pipe', 'pipe'], // Keep stdin open for parent monitoring
+					env: {
+						...process.env,
+						UMBRA_AUTH_TOKEN: this.authToken,
+					},
 				}
 			);
 
@@ -205,11 +229,25 @@ export class ServerManager {
 	 * Stop the server
 	 */
 	stop(): void {
-		if (this.serverProcess) {
+		if (this.serverProcess && !this.serverProcess.killed) {
 			console.log('Stopping Umbra server...');
+
+			// Try graceful shutdown first
 			this.serverProcess.kill('SIGTERM');
+
+			// Force kill after 5 seconds if still running
+			setTimeout(() => {
+				if (this.serverProcess && !this.serverProcess.killed) {
+					console.log('Server did not stop gracefully, forcing shutdown...');
+					this.serverProcess.kill('SIGKILL');
+				}
+			}, 5000);
+
 			this.serverProcess = null;
 		}
+
+		// Clear auth token when server stops
+		this.authToken = null;
 	}
 
 	/**

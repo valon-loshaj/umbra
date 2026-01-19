@@ -1,4 +1,5 @@
 import { SearchResult, IndexStats } from '../types';
+import { ServerManager } from './ServerManager';
 
 const SERVER_URL = 'http://localhost:37240';
 
@@ -10,9 +11,27 @@ export interface ApiHealthResponse {
 
 export class ApiClient {
 	private vaultPath: string;
+	private serverManager: ServerManager;
 
-	constructor(vaultPath: string) {
+	constructor(vaultPath: string, serverManager: ServerManager) {
 		this.vaultPath = vaultPath;
+		this.serverManager = serverManager;
+	}
+
+	/**
+	 * Get auth headers for API requests
+	 */
+	private getAuthHeaders(): Record<string, string> {
+		const token = this.serverManager.getAuthToken();
+		const headers: Record<string, string> = {
+			'Content-Type': 'application/json',
+		};
+
+		if (token) {
+			headers['Authorization'] = `Bearer ${token}`;
+		}
+
+		return headers;
 	}
 
 	/**
@@ -41,9 +60,7 @@ export class ApiClient {
 		try {
 			const response = await fetch(`${SERVER_URL}/api/search`, {
 				method: 'POST',
-				headers: {
-					'Content-Type': 'application/json',
-				},
+				headers: this.getAuthHeaders(),
 				body: JSON.stringify({
 					query,
 					limit,
@@ -71,9 +88,7 @@ export class ApiClient {
 		try {
 			const response = await fetch(`${SERVER_URL}/api/index`, {
 				method: 'POST',
-				headers: {
-					'Content-Type': 'application/json',
-				},
+				headers: this.getAuthHeaders(),
 				body: JSON.stringify({
 					vaultPath: this.vaultPath,
 					excludeFolders,
@@ -100,9 +115,7 @@ export class ApiClient {
 		try {
 			const response = await fetch(`${SERVER_URL}/api/embed`, {
 				method: 'POST',
-				headers: {
-					'Content-Type': 'application/json',
-				},
+				headers: this.getAuthHeaders(),
 				body: JSON.stringify({
 					filePath,
 					content,
@@ -130,9 +143,7 @@ export class ApiClient {
 		try {
 			const response = await fetch(`${SERVER_URL}/api/vector`, {
 				method: 'DELETE',
-				headers: {
-					'Content-Type': 'application/json',
-				},
+				headers: this.getAuthHeaders(),
 				body: JSON.stringify({
 					filePath,
 					vaultPath: this.vaultPath,

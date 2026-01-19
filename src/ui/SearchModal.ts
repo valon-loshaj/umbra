@@ -209,13 +209,6 @@ export class SearchModal extends Modal {
 				text: dirname,
 			});
 
-			// Score (convert distance to percentage)
-			const scorePercent = Math.max(0, Math.min(100, Math.round((1 - result.score) * 100)));
-			resultEl.createDiv({
-				cls: 'umbra-result-score',
-				text: `${scorePercent}% match`,
-			});
-
 			// Click handler
 			resultEl.addEventListener('click', (evt) => {
 				this.selectedIndex = index;
