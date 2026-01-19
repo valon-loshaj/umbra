@@ -18,7 +18,7 @@ export class ApiClient {
 	/**
 	 * Check if the server is healthy and responding
 	 */
-	async checkHealth(): Promise<ApiHealthResponse | null> {
+	async checkHealth(silent: boolean = false): Promise<ApiHealthResponse | null> {
 		try {
 			const response = await fetch(`${SERVER_URL}/api/health`);
 			if (!response.ok) {
@@ -26,7 +26,10 @@ export class ApiClient {
 			}
 			return await response.json();
 		} catch (error) {
-			console.error('Health check failed:', error);
+			// Only log if not in silent mode
+			if (!silent) {
+				console.error('Health check failed:', error);
+			}
 			return null;
 		}
 	}

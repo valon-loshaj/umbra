@@ -27,7 +27,7 @@ type Table = Awaited<ReturnType<Connection['openTable']>>;
 type FeatureExtractionPipeline = Awaited<ReturnType<TransformersModule['pipeline']>>;
 
 // Use createRequire for native modules that can't be bundled
-const nativeRequire = createRequire(import.meta.url);
+const nativeRequire = createRequire(__filename);
 
 export class VectorService {
 	private dataDir: string;

@@ -1,16 +1,27 @@
-import express from 'express';
-import path from 'path';
-import os from 'os';
-import { VectorService } from './services/VectorService';
+"use strict";
+var __importDefault = (this && this.__importDefault) || function (mod) {
+    return (mod && mod.__esModule) ? mod : { "default": mod };
+};
+Object.defineProperty(exports, "__esModule", { value: true });
+const express_1 = __importDefault(require("express"));
+const cors_1 = __importDefault(require("cors"));
+const path_1 = __importDefault(require("path"));
+const os_1 = __importDefault(require("os"));
+const VectorService_1 = require("./services/VectorService");
 const PORT = 37240;
 const VERSION = '0.1.0';
 const SERVER_START_TIME = Date.now();
 // Default data directory in user's home
-const DEFAULT_DATA_DIR = path.join(os.homedir(), '.umbra', 'lancedb');
-const app = express();
-app.use(express.json());
+const DEFAULT_DATA_DIR = path_1.default.join(os_1.default.homedir(), '.umbra', 'lancedb');
+const app = (0, express_1.default)();
+// Enable CORS for Obsidian app
+app.use((0, cors_1.default)({
+    origin: ['app://obsidian.md', 'capacitor://localhost', 'http://localhost'],
+    credentials: true,
+}));
+app.use(express_1.default.json());
 // Initialize VectorService
-const vectorService = new VectorService(DEFAULT_DATA_DIR);
+const vectorService = new VectorService_1.VectorService(DEFAULT_DATA_DIR);
 // Health check endpoint
 app.get('/api/health', (_req, res) => {
     const uptime = Date.now() - SERVER_START_TIME;
