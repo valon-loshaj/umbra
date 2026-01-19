@@ -1,7 +1,13 @@
-import { createHash } from 'crypto';
-import fs from 'fs/promises';
-import { createRequire } from 'module';
-import path from 'path';
+"use strict";
+var __importDefault = (this && this.__importDefault) || function (mod) {
+    return (mod && mod.__esModule) ? mod : { "default": mod };
+};
+Object.defineProperty(exports, "__esModule", { value: true });
+exports.VectorService = void 0;
+const crypto_1 = require("crypto");
+const promises_1 = __importDefault(require("fs/promises"));
+const module_1 = require("module");
+const path_1 = __importDefault(require("path"));
 const TABLE_NAME = 'notes';
 const EMBEDDING_MODEL = 'Xenova/all-MiniLM-L6-v2';
 const EMBEDDING_DIM = 384;
@@ -10,8 +16,8 @@ function isValidHexHash(value) {
     return /^[a-f0-9]{64}$/i.test(value);
 }
 // Use createRequire for native modules that can't be bundled
-const nativeRequire = createRequire(import.meta.url);
-export class VectorService {
+const nativeRequire = (0, module_1.createRequire)(__filename);
+class VectorService {
     dataDir;
     lancedb = null;
     transformers = null;
@@ -39,7 +45,7 @@ export class VectorService {
     async getDb() {
         if (!this.db) {
             const lancedb = this.getLanceDb();
-            await fs.mkdir(this.dataDir, { recursive: true });
+            await promises_1.default.mkdir(this.dataDir, { recursive: true });
             console.log('Connecting to LanceDB at:', this.dataDir);
             this.db = await lancedb.connect(this.dataDir);
         }
@@ -82,13 +88,13 @@ export class VectorService {
         return Array.from(output.data);
     }
     hashContent(content) {
-        return createHash('sha256').update(content).digest('hex');
+        return (0, crypto_1.createHash)('sha256').update(content).digest('hex');
     }
     toRelativePath(filePath, vaultPath) {
-        return path.relative(vaultPath, filePath);
+        return path_1.default.relative(vaultPath, filePath);
     }
     toAbsolutePath(relativePath, vaultPath) {
-        return path.join(vaultPath, relativePath);
+        return path_1.default.join(vaultPath, relativePath);
     }
     /**
      * Safely query by ID, validating the hash to prevent injection
@@ -188,7 +194,7 @@ export class VectorService {
         let indexedCount = 0;
         for (const file of files) {
             try {
-                const content = await fs.readFile(file, 'utf-8');
+                const content = await promises_1.default.readFile(file, 'utf-8');
                 await this.embedFile(file, content, vaultPath);
                 indexedCount++;
             }
@@ -213,15 +219,15 @@ export class VectorService {
     async getMarkdownFiles(dir, excludeFolders = []) {
         const files = [];
         try {
-            const entries = await fs.readdir(dir, { withFileTypes: true });
+            const entries = await promises_1.default.readdir(dir, { withFileTypes: true });
             for (const entry of entries) {
                 // Skip hidden files and directories
                 if (entry.name.startsWith('.'))
                     continue;
-                const fullPath = path.join(dir, entry.name);
+                const fullPath = path_1.default.join(dir, entry.name);
                 // Check if this path should be excluded
                 const shouldExclude = excludeFolders.some(folder => {
-                    const normalizedFolder = path.normalize(folder);
+                    const normalizedFolder = path_1.default.normalize(folder);
                     return fullPath.includes(normalizedFolder);
                 });
                 if (shouldExclude)
@@ -249,3 +255,4 @@ export class VectorService {
         this.embeddingPipeline = null;
     }
 }
+exports.VectorService = VectorService;

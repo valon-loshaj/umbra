@@ -1,4 +1,5 @@
-import { ChildProcess, spawn } from 'child_process';
+import { ChildProcess, spawn, execSync } from 'child_process';
+import { existsSync } from 'fs';
 import { Notice } from 'obsidian';
 
 const SERVER_PORT = 37240;
@@ -10,15 +11,79 @@ export class ServerManager {
 	private serverProcess: ChildProcess | null = null;
 	private pluginDir: string;
 	private isStarting: boolean = false;
+	private nodePath: string | null = null;
 
 	constructor(pluginDir: string) {
 		this.pluginDir = pluginDir;
+		this.nodePath = this.findNodePath();
+	}
+
+	/**
+	 * Find Node.js executable in common locations
+	 */
+	private findNodePath(): string | null {
+		// Try common locations
+		const commonPaths = [
+			'/usr/local/bin/node',
+			'/opt/homebrew/bin/node',
+			'/usr/bin/node',
+		];
+
+		// Check common paths first
+		for (const path of commonPaths) {
+			if (existsSync(path)) {
+				console.log('Found node at:', path);
+				return path;
+			}
+		}
+
+		// Try to find nvm node
+		try {
+			const home = process.env.HOME || process.env.USERPROFILE;
+			if (home) {
+				// Look for default nvm node
+				const nvmDefault = `${home}/.nvm/versions/node`;
+				if (existsSync(nvmDefault)) {
+					// Try to read the current version or use latest
+					try {
+						const versions = require('fs').readdirSync(nvmDefault);
+						if (versions.length > 0) {
+							// Sort and use latest version
+							const latest = versions.sort().reverse()[0];
+							const nvmNode = `${nvmDefault}/${latest}/bin/node`;
+							if (existsSync(nvmNode)) {
+								console.log('Found nvm node at:', nvmNode);
+								return nvmNode;
+							}
+						}
+					} catch (e) {
+						console.error('Error reading nvm versions:', e);
+					}
+				}
+			}
+		} catch (error) {
+			console.error('Error finding nvm node:', error);
+		}
+
+		// Last resort: try which command with shell
+		try {
+			const which = execSync('which node', { encoding: 'utf8', timeout: 3000 }).trim();
+			if (which && existsSync(which)) {
+				console.log('Found node via which:', which);
+				return which;
+			}
+		} catch (error) {
+			console.error('Error using which command:', error);
+		}
+
+		console.error('Could not find node binary');
+		return null;
 	}
 
 	/**
 	 * Check if server is responding
 	 */
-	async checkHealth(): Promise<boolean> {
+	async checkHealth(silent: boolean = false): Promise<boolean> {
 		try {
 			const response = await fetch(`${SERVER_URL}/api/health`, {
 				method: 'GET',
@@ -26,6 +91,10 @@ export class ServerManager {
 			});
 			return response.ok;
 		} catch (error) {
+			// Only log if not in silent mode (used during startup polling)
+			if (!silent) {
+				console.error('Health check failed:', error);
+			}
 			return false;
 		}
 	}
@@ -39,8 +108,8 @@ export class ServerManager {
 			return false;
 		}
 
-		// Check if server is already running
-		if (await this.checkHealth()) {
+		// Check if server is already running (silent check - don't log expected failures)
+		if (await this.checkHealth(true)) {
 			console.log('Server is already running');
 			return true;
 		}
@@ -48,17 +117,25 @@ export class ServerManager {
 		this.isStarting = true;
 		new Notice('Starting Umbra server...');
 
+		if (!this.nodePath) {
+			new Notice('Node.js not found. Please install Node.js and restart Obsidian.');
+			console.error('Node.js binary not found in common locations');
+			this.isStarting = false;
+			return false;
+		}
+
 		try {
 			// Path to server entry point
 			const serverPath = `${this.pluginDir}/server`;
-			const serverScript = `${serverPath}/index.ts`;
+			const serverScript = `${serverPath}/dist/index.js`;
 
 			console.log('Starting server from:', serverScript);
+			console.log('Using node at:', this.nodePath);
 
-			// Spawn server process using tsx (TypeScript runner)
+			// Spawn server process using found node binary
 			this.serverProcess = spawn(
-				'npx',
-				['tsx', serverScript],
+				this.nodePath,
+				[serverScript],
 				{
 					cwd: serverPath,
 					detached: false,
@@ -112,12 +189,15 @@ export class ServerManager {
 		const startTime = Date.now();
 
 		while (Date.now() - startTime < timeout) {
-			if (await this.checkHealth()) {
+			// Silent check - we expect failures while server boots
+			if (await this.checkHealth(true)) {
+				console.log('Server is ready and responding');
 				return true;
 			}
 			await new Promise(resolve => setTimeout(resolve, HEALTH_CHECK_INTERVAL));
 		}
 
+		console.error('Server failed to start within timeout period');
 		return false;
 	}
 

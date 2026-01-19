@@ -1,4 +1,5 @@
 import express, { Request, Response } from 'express';
+import cors from 'cors';
 import path from 'path';
 import os from 'os';
 import { VectorService } from './services/VectorService';
@@ -22,6 +23,13 @@ const SERVER_START_TIME = Date.now();
 const DEFAULT_DATA_DIR = path.join(os.homedir(), '.umbra', 'lancedb');
 
 const app = express();
+
+// Enable CORS for Obsidian app
+app.use(cors({
+	origin: ['app://obsidian.md', 'capacitor://localhost', 'http://localhost'],
+	credentials: true,
+}));
+
 app.use(express.json());
 
 // Initialize VectorService

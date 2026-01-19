@@ -132,10 +132,15 @@ export default class UmbraPlugin extends Plugin {
 	 * Start periodic health check
 	 */
 	private startHealthCheck() {
-		// Check every 10 seconds
+		// Check every 10 seconds (silent to avoid console spam)
 		this.healthCheckInterval = setInterval(async () => {
-			const isHealthy = await this.serverManager.checkHealth();
+			const isHealthy = await this.serverManager.checkHealth(true);
 			this.updateStatusBar(isHealthy);
+
+			// Log status changes only
+			if (!isHealthy) {
+				console.warn('Umbra server connection lost');
+			}
 		}, 10000);
 	}
 }
