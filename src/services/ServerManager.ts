@@ -1,7 +1,8 @@
 import { ChildProcess, spawn, execSync } from 'child_process';
-import { existsSync } from 'fs';
+import { existsSync, statSync } from 'fs';
 import { Notice } from 'obsidian';
 import { randomBytes } from 'crypto';
+import * as path from 'path';
 
 const SERVER_PORT = 37240;
 const SERVER_URL = `http://localhost:${SERVER_PORT}`;
@@ -97,6 +98,51 @@ export class ServerManager {
 	}
 
 	/**
+	 * Verify that all required server files and dependencies are present
+	 */
+	private verifyServerDependencies(): { success: boolean; error?: string } {
+		const serverPath = path.join(this.pluginDir, 'server');
+		const serverScript = path.join(serverPath, 'dist', 'index.js');
+		const nodeModules = path.join(serverPath, 'node_modules');
+
+		// Check if server script exists
+		if (!existsSync(serverScript)) {
+			return {
+				success: false,
+				error: `Server script not found at ${serverScript}. Please reinstall the plugin.`
+			};
+		}
+
+		// Check if node_modules exists
+		if (!existsSync(nodeModules) || !statSync(nodeModules).isDirectory()) {
+			return {
+				success: false,
+				error: 'Server dependencies not found. Please reinstall the plugin.'
+			};
+		}
+
+		// Check for critical dependencies
+		const criticalDeps = [
+			'@lancedb/lancedb',
+			'@xenova/transformers',
+			'express',
+			'cors'
+		];
+
+		for (const dep of criticalDeps) {
+			const depPath = path.join(nodeModules, dep);
+			if (!existsSync(depPath)) {
+				return {
+					success: false,
+					error: `Critical dependency '${dep}' not found. Please reinstall the plugin.`
+				};
+			}
+		}
+
+		return { success: true };
+	}
+
+	/**
 	 * Check if server is responding
 	 */
 	async checkHealth(silent: boolean = false): Promise<boolean> {
@@ -136,6 +182,15 @@ export class ServerManager {
 		if (!this.nodePath) {
 			new Notice('Node.js not found. Please install Node.js and restart Obsidian.');
 			console.error('Node.js binary not found in common locations');
+			this.isStarting = false;
+			return false;
+		}
+
+		// Verify server dependencies before starting
+		const verification = this.verifyServerDependencies();
+		if (!verification.success) {
+			new Notice(`Umbra: ${verification.error}`);
+			console.error('Server dependency verification failed:', verification.error);
 			this.isStarting = false;
 			return false;
 		}
