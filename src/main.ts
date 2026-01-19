@@ -1,7 +1,42 @@
-import { Plugin, Notice } from 'obsidian';
+import { Plugin, Notice, DataAdapter } from 'obsidian';
 import { ApiClient } from './services/ApiClient';
 import { ServerManager } from './services/ServerManager';
 import { SearchModal } from './ui/SearchModal';
+
+/**
+ * Extended DataAdapter interface for type-safe access to vault path
+ * Desktop adapter has basePath property, mobile has getBasePath() method
+ */
+interface VaultAdapter extends DataAdapter {
+	basePath?: string;
+	getBasePath?(): string;
+}
+
+/**
+ * Type guard to check if adapter has proper vault path access
+ */
+function isVaultAdapter(adapter: DataAdapter): adapter is VaultAdapter {
+	return 'basePath' in adapter || 'getBasePath' in adapter;
+}
+
+/**
+ * Safely get the vault path from the adapter with runtime guards
+ */
+function getVaultPath(adapter: DataAdapter): string {
+	if (!isVaultAdapter(adapter)) {
+		throw new Error('Vault adapter does not have basePath or getBasePath');
+	}
+
+	if (adapter.basePath) {
+		return adapter.basePath;
+	}
+
+	if (adapter.getBasePath) {
+		return adapter.getBasePath();
+	}
+
+	throw new Error('Unable to determine vault path from adapter');
+}
 
 export default class UmbraPlugin extends Plugin {
 	apiClient: ApiClient;
@@ -12,9 +47,8 @@ export default class UmbraPlugin extends Plugin {
 	async onload() {
 		console.log('Loading Umbra plugin');
 
-		// Get absolute path to vault root and plugin directory
-		const adapter = this.app.vault.adapter as any;
-		const vaultPath = adapter.basePath || adapter.getBasePath?.() || '';
+		// Get absolute path to vault root and plugin directory with type safety
+		const vaultPath = getVaultPath(this.app.vault.adapter);
 		const pluginDir = `${vaultPath}/${this.app.vault.configDir}/plugins/umbra`;
 
 		console.log('Umbra: Vault path:', vaultPath);
@@ -28,8 +62,8 @@ export default class UmbraPlugin extends Plugin {
 			new Notice('Umbra: Failed to start server. Some features may not work.');
 		}
 
-		// Initialize API client
-		this.apiClient = new ApiClient(vaultPath);
+		// Initialize API client with server manager for auth
+		this.apiClient = new ApiClient(vaultPath, this.serverManager);
 
 		// Create status bar item
 		this.statusBarItem = this.addStatusBarItem();

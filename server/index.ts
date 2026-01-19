@@ -1,4 +1,4 @@
-import express, { Request, Response } from 'express';
+import express, { Request, Response, NextFunction } from 'express';
 import cors from 'cors';
 import path from 'path';
 import os from 'os';
@@ -19,23 +19,53 @@ const PORT = 37240;
 const VERSION = '0.1.0';
 const SERVER_START_TIME = Date.now();
 
+// Read auth token from environment variable
+const AUTH_TOKEN = process.env.UMBRA_AUTH_TOKEN;
+
+if (!AUTH_TOKEN) {
+	console.error('FATAL: UMBRA_AUTH_TOKEN environment variable not set');
+	process.exit(1);
+}
+
+console.log('Auth token configured for session');
+
 // Default data directory in user's home
 const DEFAULT_DATA_DIR = path.join(os.homedir(), '.umbra', 'lancedb');
 
 const app = express();
 
-// Enable CORS for Obsidian app
+// Enable CORS for Obsidian app only (tightened for security)
 app.use(cors({
-	origin: ['app://obsidian.md', 'capacitor://localhost', 'http://localhost'],
+	origin: ['app://obsidian.md', 'capacitor://localhost'],
 	credentials: true,
 }));
 
 app.use(express.json());
 
+/**
+ * Authentication middleware - validates Bearer token
+ */
+function authenticateToken(req: Request, res: Response, next: NextFunction) {
+	const authHeader = req.headers['authorization'];
+	const token = authHeader && authHeader.split(' ')[1]; // Bearer <token>
+
+	if (!token) {
+		res.status(401).json({ error: 'Authentication required' });
+		return;
+	}
+
+	if (token !== AUTH_TOKEN) {
+		res.status(403).json({ error: 'Invalid authentication token' });
+		return;
+	}
+
+	next();
+}
+
 // Initialize VectorService
 const vectorService = new VectorService(DEFAULT_DATA_DIR);
 
-// Health check endpoint
+// Health check endpoint (no auth required - for monitoring)
 app.get('/api/health', (_req: Request, res: Response<HealthResponse>) => {
 	const uptime = Date.now() - SERVER_START_TIME;
 	res.json({
@@ -45,8 +75,8 @@ app.get('/api/health', (_req: Request, res: Response<HealthResponse>) => {
 	});
 });
 
-// Search endpoint
-app.post('/api/search', async (req: Request<{}, {}, SearchRequest>, res: Response<SearchResponse>) => {
+// Search endpoint (auth required)
+app.post('/api/search', authenticateToken, async (req: Request<{}, {}, SearchRequest>, res: Response<SearchResponse>) => {
 	try {
 		const { query, limit = 10, vaultPath } = req.body;
 
@@ -63,8 +93,8 @@ app.post('/api/search', async (req: Request<{}, {}, SearchRequest>, res: Respons
 	}
 });
 
-// Index vault endpoint
-app.post('/api/index', async (req: Request<{}, {}, IndexRequest>, res: Response<IndexResponse>) => {
+// Index vault endpoint (auth required)
+app.post('/api/index', authenticateToken, async (req: Request<{}, {}, IndexRequest>, res: Response<IndexResponse>) => {
 	try {
 		const { vaultPath, excludeFolders = [] } = req.body;
 
@@ -81,8 +111,8 @@ app.post('/api/index', async (req: Request<{}, {}, IndexRequest>, res: Response<
 	}
 });
 
-// Embed file endpoint
-app.post('/api/embed', async (req: Request<{}, {}, EmbedRequest>, res: Response<EmbedResponse>) => {
+// Embed file endpoint (auth required)
+app.post('/api/embed', authenticateToken, async (req: Request<{}, {}, EmbedRequest>, res: Response<EmbedResponse>) => {
 	try {
 		const { filePath, content, vaultPath } = req.body;
 
@@ -99,8 +129,8 @@ app.post('/api/embed', async (req: Request<{}, {}, EmbedRequest>, res: Response<
 	}
 });
 
-// Remove vector endpoint
-app.delete('/api/vector', async (req: Request<{}, {}, RemoveVectorRequest>, res: Response<RemoveVectorResponse>) => {
+// Remove vector endpoint (auth required)
+app.delete('/api/vector', authenticateToken, async (req: Request<{}, {}, RemoveVectorRequest>, res: Response<RemoveVectorResponse>) => {
 	try {
 		const { filePath, vaultPath } = req.body;
 
@@ -118,21 +148,44 @@ app.delete('/api/vector', async (req: Request<{}, {}, RemoveVectorRequest>, res:
 });
 
 // Start server
-app.listen(PORT, 'localhost', () => {
+const server = app.listen(PORT, 'localhost', () => {
 	console.log(`Umbra server listening on http://localhost:${PORT}`);
 	console.log(`Data directory: ${DEFAULT_DATA_DIR}`);
 	console.log(`Server ready to accept requests`);
+	console.log(`Parent process: ${process.ppid}`);
 });
 
-// Graceful shutdown
-process.on('SIGTERM', async () => {
-	console.log('SIGTERM received, closing server...');
-	await vectorService.close();
-	process.exit(0);
-});
+// Monitor parent process - exit if parent (Obsidian) dies
+const parentPid = process.ppid;
+const parentCheckInterval = setInterval(() => {
+	try {
+		// Check if parent process still exists
+		// process.kill with signal 0 doesn't kill, just checks if process exists
+		process.kill(parentPid, 0);
+	} catch (error) {
+		console.log('Parent process no longer exists, shutting down...');
+		clearInterval(parentCheckInterval);
+		shutdown();
+	}
+}, 2000); // Check every 2 seconds
 
-process.on('SIGINT', async () => {
-	console.log('SIGINT received, closing server...');
+// Graceful shutdown function
+async function shutdown() {
+	console.log('Shutting down Umbra server...');
+	clearInterval(parentCheckInterval);
+	server.close();
 	await vectorService.close();
 	process.exit(0);
+}
+
+// Handle termination signals
+process.on('SIGTERM', shutdown);
+process.on('SIGINT', shutdown);
+process.on('SIGHUP', shutdown); // Parent process died
+
+// Handle stdin close (parent disconnected)
+process.stdin.on('end', () => {
+	console.log('Parent process disconnected (stdin closed), shutting down...');
+	shutdown();
 });
+process.stdin.resume(); // Enable stdin monitoring
