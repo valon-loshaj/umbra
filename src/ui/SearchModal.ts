@@ -1,9 +1,9 @@
 import { App, Modal, TFile, Notice } from 'obsidian';
-import { VectorService } from '../services/VectorService';
+import { ApiClient } from '../services/ApiClient';
 import { SearchResult } from '../types';
 
 export class SearchModal extends Modal {
-	private vectorService: VectorService;
+	private apiClient: ApiClient;
 	private inputEl: HTMLInputElement;
 	private resultsEl: HTMLElement;
 	private results: SearchResult[] = [];
@@ -11,9 +11,9 @@ export class SearchModal extends Modal {
 	private debounceTimer: NodeJS.Timeout | null = null;
 	private isSearching: boolean = false;
 
-	constructor(app: App, vectorService: VectorService) {
+	constructor(app: App, apiClient: ApiClient) {
 		super(app);
-		this.vectorService = vectorService;
+		this.apiClient = apiClient;
 	}
 
 	onOpen() {
@@ -70,7 +70,7 @@ export class SearchModal extends Modal {
 		this.showLoading();
 
 		try {
-			this.results = await this.vectorService.search(query, 10);
+			this.results = await this.apiClient.search(query, 10);
 			this.selectedIndex = 0;
 			this.renderResults();
 		} catch (error) {

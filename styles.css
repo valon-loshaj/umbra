@@ -81,3 +81,11 @@
 .umbra-status-bar-item {
 	cursor: default;
 }
+
+.umbra-status-connected {
+	color: var(--text-success, #4caf50);
+}
+
+.umbra-status-disconnected {
+	color: var(--text-error, #f44336);
+}
