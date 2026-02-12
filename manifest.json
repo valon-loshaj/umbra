@@ -1,7 +1,7 @@
 {
 	"id": "umbra",
 	"name": "Umbra",
-	"version": "0.1.0",
+	"version": "0.2.0",
 	"minAppVersion": "0.15.0",
 	"description": "Semantic search for your notes using local vector embeddings with LanceDB and Transformers.js",
 	"author": "valon-loshaj",
