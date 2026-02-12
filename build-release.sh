@@ -29,18 +29,12 @@ cd server
 npm run build
 cd ..
 
-# Copy server to release directory
+# Copy server to release directory (no node_modules - they're auto-installed on first run)
 echo -e "${BLUE}Copying server files...${NC}"
 mkdir -p release/umbra/server
 cp -r server/dist release/umbra/server/dist
 cp server/package.json release/umbra/server/
 cp server/package-lock.json release/umbra/server/
-
-# Install production dependencies in release
-echo -e "${BLUE}Installing production dependencies...${NC}"
-cd release/umbra/server
-npm ci --omit=dev --quiet
-cd ../../..
 
 # Get version from manifest
 VERSION=$(node -p "require('./manifest.json').version")
