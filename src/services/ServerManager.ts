@@ -8,6 +8,7 @@ const SERVER_PORT = 37240;
 const SERVER_URL = `http://localhost:${SERVER_PORT}`;
 const SERVER_START_TIMEOUT = 30000; // 30 seconds
 const HEALTH_CHECK_INTERVAL = 1000; // 1 second
+const DEPENDENCY_INSTALL_TIMEOUT = 300000; // 5 minutes for slow connections
 
 export class ServerManager {
 	private serverProcess: ChildProcess | null = null;
@@ -98,14 +99,148 @@ export class ServerManager {
 	}
 
 	/**
-	 * Verify that all required server files and dependencies are present
+	 * Find npm executable based on Node.js path or fallback to which
 	 */
-	private verifyServerDependencies(): { success: boolean; error?: string } {
+	private findNpmPath(): string | null {
+		if (!this.nodePath) return null;
+
+		// npm is typically a sibling to node in the bin directory
+		const nodeDir = path.dirname(this.nodePath);
+		const npmPath = path.join(nodeDir, 'npm');
+
+		if (existsSync(npmPath)) {
+			console.log('Found npm at:', npmPath);
+			return npmPath;
+		}
+
+		// Fallback: try which command
+		try {
+			const which = execSync('which npm', { encoding: 'utf8', timeout: 3000 }).trim();
+			if (which && existsSync(which)) {
+				console.log('Found npm via which:', which);
+				return which;
+			}
+		} catch { /* ignore */ }
+
+		console.error('Could not find npm binary');
+		return null;
+	}
+
+	/**
+	 * Install server dependencies via npm ci
+	 * Returns true on success, false on failure
+	 */
+	private async installDependencies(): Promise<boolean> {
+		const npmPath = this.findNpmPath();
+		if (!npmPath) {
+			new Notice('npm not found. Please ensure npm is installed alongside Node.js.');
+			return false;
+		}
+
+		const serverPath = path.join(this.pluginDir, 'server');
+		const packageJson = path.join(serverPath, 'package.json');
+		const packageLock = path.join(serverPath, 'package-lock.json');
+
+		// Verify package files exist
+		if (!existsSync(packageJson) || !existsSync(packageLock)) {
+			new Notice('Package files missing. Please reinstall the plugin.');
+			console.error('Missing package.json or package-lock.json');
+			return false;
+		}
+
+		// Show persistent notice during installation
+		const notice = new Notice('Installing Umbra dependencies... (this may take a minute)', 0);
+
+		return new Promise<boolean>((resolve) => {
+			let stderr = '';
+
+			const npmProcess = spawn(npmPath, ['ci', '--omit=dev'], {
+				cwd: serverPath,
+				stdio: ['pipe', 'pipe', 'pipe'],
+				env: {
+					...process.env,
+					// Ensure npm can find node
+					PATH: `${path.dirname(this.nodePath!)}:${process.env.PATH}`,
+				},
+			});
+
+			npmProcess.stdout?.on('data', (data) => {
+				console.log('[npm]', data.toString().trim());
+			});
+
+			npmProcess.stderr?.on('data', (data) => {
+				const output = data.toString();
+				stderr += output;
+				console.error('[npm]', output.trim());
+			});
+
+			// Set timeout
+			const timeout = setTimeout(() => {
+				npmProcess.kill('SIGKILL');
+				notice.hide();
+				new Notice('Dependency installation timed out. Check your network connection.');
+				console.error('npm ci timed out after 5 minutes');
+				resolve(false);
+			}, DEPENDENCY_INSTALL_TIMEOUT);
+
+			npmProcess.on('error', (error) => {
+				clearTimeout(timeout);
+				notice.hide();
+				console.error('npm process error:', error);
+				new Notice('Failed to run npm. Check console for details.');
+				resolve(false);
+			});
+
+			npmProcess.on('exit', (code) => {
+				clearTimeout(timeout);
+				notice.hide();
+
+				if (code === 0) {
+					new Notice('Dependencies installed successfully');
+					console.log('npm ci completed successfully');
+					resolve(true);
+				} else {
+					console.error(`npm ci exited with code ${code}`);
+					// Parse error type for actionable message
+					const errorMessage = this.parseNpmError(stderr);
+					new Notice(errorMessage);
+					resolve(false);
+				}
+			});
+		});
+	}
+
+	/**
+	 * Parse npm error output to provide actionable user message
+	 */
+	private parseNpmError(stderr: string): string {
+		const lowerStderr = stderr.toLowerCase();
+
+		if (lowerStderr.includes('enotfound') || lowerStderr.includes('enetunreach') || lowerStderr.includes('etimedout')) {
+			return 'Network error during install. Check your internet connection.';
+		}
+
+		if (lowerStderr.includes('eacces') || lowerStderr.includes('permission denied')) {
+			return 'Permission denied. Check folder permissions.';
+		}
+
+		if (lowerStderr.includes('enospc')) {
+			return 'Disk full. Free up space and try again.';
+		}
+
+		return 'Failed to install dependencies. Check console for details.';
+	}
+
+	/**
+	 * Verify that all required server files and dependencies are present
+	 * Returns needsInstall: true when dependencies can be auto-installed
+	 */
+	private verifyServerDependencies(): { success: boolean; error?: string; needsInstall?: boolean } {
 		const serverPath = path.join(this.pluginDir, 'server');
 		const serverScript = path.join(serverPath, 'dist', 'index.js');
 		const nodeModules = path.join(serverPath, 'node_modules');
 
-		// Check if server script exists
+		// Check if server script exists (cannot be auto-installed)
 		if (!existsSync(serverScript)) {
 			return {
 				success: false,
@@ -117,7 +252,8 @@ export class ServerManager {
 		if (!existsSync(nodeModules) || !statSync(nodeModules).isDirectory()) {
 			return {
 				success: false,
-				error: 'Server dependencies not found. Please reinstall the plugin.'
+				needsInstall: true,
+				error: 'Server dependencies not installed.'
 			};
 		}
 
@@ -134,7 +270,8 @@ export class ServerManager {
 			if (!existsSync(depPath)) {
 				return {
 					success: false,
-					error: `Critical dependency '${dep}' not found. Please reinstall the plugin.`
+					needsInstall: true,
+					error: `Critical dependency '${dep}' not found.`
 				};
 			}
 		}
@@ -187,12 +324,30 @@ export class ServerManager {
 		}
 
 		// Verify server dependencies before starting
-		const verification = this.verifyServerDependencies();
+		let verification = this.verifyServerDependencies();
 		if (!verification.success) {
-			new Notice(`Umbra: ${verification.error}`);
-			console.error('Server dependency verification failed:', verification.error);
-			this.isStarting = false;
-			return false;
+			if (verification.needsInstall) {
+				// Try auto-installing dependencies
+				console.log('Dependencies missing, attempting auto-install...');
+				const installed = await this.installDependencies();
+				if (!installed) {
+					this.isStarting = false;
+					return false;
+				}
+				// Re-verify after installation
+				verification = this.verifyServerDependencies();
+				if (!verification.success) {
+					new Notice(`Umbra: ${verification.error}`);
+					console.error('Dependencies still missing after install:', verification.error);
+					this.isStarting = false;
+					return false;
+				}
+			} else {
+				new Notice(`Umbra: ${verification.error}`);
+				console.error('Server dependency verification failed:', verification.error);
+				this.isStarting = false;
+				return false;
+			}
 		}
 
 		try {
