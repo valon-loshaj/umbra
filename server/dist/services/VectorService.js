@@ -8,6 +8,7 @@ const crypto_1 = require("crypto");
 const promises_1 = __importDefault(require("fs/promises"));
 const module_1 = require("module");
 const path_1 = __importDefault(require("path"));
+const MarkdownChunker_1 = require("./MarkdownChunker");
 const TABLE_NAME = 'notes';
 const EMBEDDING_MODEL = 'Xenova/all-MiniLM-L6-v2';
 const EMBEDDING_DIM = 384;
@@ -76,19 +77,16 @@ class VectorService {
             let table;
             if (tableNames.includes(TABLE_NAME)) {
                 table = await db.openTable(TABLE_NAME);
+                // Check if schema migration is needed
+                const needsMigration = await this.checkSchemaMigration(table);
+                if (needsMigration) {
+                    console.log('Schema upgrade required - dropping old table');
+                    await db.dropTable(TABLE_NAME);
+                    table = await this.createTableWithSchema(db);
+                }
             }
             else {
-                // Create table with explicit schema using a sample record
-                const schemaRecord = {
-                    id: '__schema__',
-                    vector: new Array(EMBEDDING_DIM).fill(0),
-                    path: '',
-                    content_hash: '',
-                    last_updated: 0,
-                };
-                table = await db.createTable(TABLE_NAME, [schemaRecord]);
-                // Remove the schema placeholder
-                await table.delete('id = "__schema__"');
+                table = await this.createTableWithSchema(db);
             }
             this.vaultTables.set(vaultHash, table);
         }
@@ -147,6 +145,55 @@ class VectorService {
         await table.delete(`id = "${id}"`);
     }
     /**
+     * Check if schema migration is needed by looking for new fields.
+     * Returns true if migration is needed.
+     */
+    async checkSchemaMigration(table) {
+        const sample = (await table.query().limit(1).toArray());
+        if (sample.length === 0) {
+            return false; // Empty table, schema is fine
+        }
+        // Check for new chunk_index field
+        if (!('chunk_index' in sample[0])) {
+            console.log('Index schema upgraded. Please re-index your vault.');
+            return true;
+        }
+        return false;
+    }
+    /**
+     * Create table with the current schema including chunk fields.
+     */
+    async createTableWithSchema(db) {
+        const schemaRecord = {
+            id: '__schema__',
+            vector: new Array(EMBEDDING_DIM).fill(0),
+            path: '',
+            content_hash: '',
+            last_updated: 0,
+            chunk_index: 0,
+            header_path: '',
+            start_line: 0,
+            end_line: 0,
+        };
+        const table = await db.createTable(TABLE_NAME, [schemaRecord]);
+        await table.delete('id = "__schema__"');
+        return table;
+    }
+    /**
+     * Get all chunks for a file by path.
+     */
+    async getChunksForFile(table, relativePath) {
+        const escapedPath = relativePath.replace(/"/g, '\\"');
+        return (await table.query().where(`path = "${escapedPath}"`).toArray());
+    }
+    /**
+     * Delete all chunks for a file by path.
+     */
+    async deleteChunksForFile(table, relativePath) {
+        const escapedPath = relativePath.replace(/"/g, '\\"');
+        await table.delete(`path = "${escapedPath}"`);
+    }
+    /**
      * Check if the service initialized successfully
      */
     isAvailable() {
@@ -154,29 +201,45 @@ class VectorService {
     }
     /**
      * Embed a file's content and store in the vector database.
+     * Uses markdown chunking to store separate vectors for each section.
      * Skips unchanged files based on content hash.
      */
     async embedFile(filePath, content, vaultPath) {
         const table = await this.getTable(vaultPath);
         const relativePath = this.toRelativePath(filePath, vaultPath);
-        const contentHash = this.hashContent(content);
-        const id = this.hashContent(relativePath);
-        const existing = await this.findById(table, id);
-        if (existing.length > 0 && existing[0].content_hash === contentHash) {
-            return; // Skip unchanged file
+        const fileHash = this.hashContent(content);
+        // Check if file changed (compare against any existing chunk's content_hash)
+        const existing = await this.getChunksForFile(table, relativePath);
+        if (existing.length > 0 && existing[0].content_hash === fileHash) {
+            return; // File unchanged, skip
         }
-        const vector = await this.embed(content);
-        const record = {
-            id,
-            vector,
-            path: relativePath,
-            content_hash: contentHash,
-            last_updated: Date.now(),
-        };
+        // File changed or new - delete old chunks, create new ones
         if (existing.length > 0) {
-            await this.deleteById(table, id);
+            await this.deleteChunksForFile(table, relativePath);
         }
-        await table.add([record]);
+        const chunks = (0, MarkdownChunker_1.chunkMarkdown)(content);
+        // Handle empty files - no chunks to create
+        if (chunks.length === 0) {
+            return;
+        }
+        const records = [];
+        for (let i = 0; i < chunks.length; i++) {
+            const chunk = chunks[i];
+            const id = this.hashContent(`${relativePath}#${i}`);
+            const vector = await this.embed(chunk.content);
+            records.push({
+                id,
+                vector,
+                path: relativePath,
+                content_hash: fileHash, // Same for all chunks of this file
+                last_updated: Date.now(),
+                chunk_index: i,
+                header_path: chunk.headerPath,
+                start_line: chunk.startLine,
+                end_line: chunk.endLine,
+            });
+        }
+        await table.add(records);
     }
     /**
      * Search for notes semantically similar to the query.
@@ -187,14 +250,13 @@ class VectorService {
         try {
             const table = await this.getTable(vaultPath);
             const queryVector = await this.embed(query);
-            const results = await table
-                .search(queryVector)
-                .limit(limit)
-                .toArray();
+            const results = (await table.search(queryVector).limit(limit).toArray());
             // Return vault-relative paths (already stored with forward slashes)
             return results.map((row) => ({
                 path: row.path,
                 score: row._distance,
+                headerPath: row.header_path,
+                startLine: row.start_line,
             }));
         }
         catch (error) {
@@ -209,20 +271,23 @@ class VectorService {
     async indexVault(vaultPath, excludeFolders = []) {
         const table = await this.getTable(vaultPath);
         const files = await this.getMarkdownFiles(vaultPath, excludeFolders);
-        // Build set of current file IDs
-        const currentFileIds = new Set();
+        // Build set of current file paths
+        const currentFilePaths = new Set();
         for (const file of files) {
             const relativePath = this.toRelativePath(file, vaultPath);
-            currentFileIds.add(this.hashContent(relativePath));
+            currentFilePaths.add(relativePath);
         }
-        // Get all existing vectors and find stale ones
-        const allRecords = await table.query().toArray();
-        const staleIds = allRecords
-            .filter(record => !currentFileIds.has(record.id))
-            .map(record => record.id);
-        // Remove stale vectors
-        for (const id of staleIds) {
-            await this.deleteById(table, id);
+        // Get all existing vectors and find stale file paths
+        const allRecords = (await table.query().toArray());
+        const stalePaths = new Set();
+        for (const record of allRecords) {
+            if (!currentFilePaths.has(record.path)) {
+                stalePaths.add(record.path);
+            }
+        }
+        // Remove stale vectors by file path
+        for (const stalePath of stalePaths) {
+            await this.deleteChunksForFile(table, stalePath);
         }
         // Index current files
         let indexedCount = 0;
@@ -236,16 +301,15 @@ class VectorService {
                 console.error(`Failed to index ${file}:`, error);
             }
         }
-        return { indexed: indexedCount, removed: staleIds.length };
+        return { indexed: indexedCount, removed: stalePaths.size };
     }
     /**
-     * Remove a single file's vector from the database.
+     * Remove all vectors for a file from the database.
      */
     async removeVector(filePath, vaultPath) {
         const table = await this.getTable(vaultPath);
         const relativePath = this.toRelativePath(filePath, vaultPath);
-        const id = this.hashContent(relativePath);
-        await this.deleteById(table, id);
+        await this.deleteChunksForFile(table, relativePath);
     }
     /**
      * Get all markdown files in a directory, respecting exclude folders.
