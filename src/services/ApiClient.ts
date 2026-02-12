@@ -82,30 +82,46 @@ export class ApiClient {
 	}
 
 	/**
-	 * Index all markdown files in the vault
+	 * Index all markdown files in the vault with optional progress updates via SSE
 	 */
-	async indexVault(excludeFolders: string[] = [], onProgress?: (current: number, total: number) => void): Promise<IndexStats> {
-		try {
-			const response = await fetch(`${SERVER_URL}/api/index`, {
-				method: 'POST',
-				headers: this.getAuthHeaders(),
-				body: JSON.stringify({
-					vaultPath: this.vaultPath,
-					excludeFolders,
-				}),
+	async indexVault(
+		excludeFolders: string[] = [],
+		onProgress?: (current: number, total: number) => void
+	): Promise<IndexStats> {
+		return new Promise((resolve, reject) => {
+			const token = this.serverManager.getAuthToken();
+			const params = new URLSearchParams({
+				vaultPath: this.vaultPath,
+				excludeFolders: excludeFolders.join(','),
+				token: token || '',
 			});
 
-			if (!response.ok) {
-				console.error('Index request failed:', response.statusText);
-				return { indexed: 0, removed: 0 };
-			}
+			const eventSource = new EventSource(
+				`${SERVER_URL}/api/index/stream?${params}`
+			);
 
-			const data = await response.json();
-			return data.stats || { indexed: 0, removed: 0 };
-		} catch (error) {
-			console.error('Index failed:', error);
-			return { indexed: 0, removed: 0 };
-		}
+			eventSource.onmessage = (event) => {
+				try {
+					const data = JSON.parse(event.data);
+					if (data.type === 'progress') {
+						onProgress?.(data.current, data.total);
+					} else if (data.type === 'complete') {
+						eventSource.close();
+						resolve(data.stats);
+					} else if (data.type === 'error') {
+						eventSource.close();
+						reject(new Error(data.message));
+					}
+				} catch (parseError) {
+					console.error('Failed to parse SSE data:', parseError);
+				}
+			};
+
+			eventSource.onerror = () => {
+				eventSource.close();
+				reject(new Error('Connection lost during indexing'));
+			};
+		});
 	}
 
 	/**

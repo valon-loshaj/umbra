@@ -317,8 +317,13 @@ export class VectorService {
 	/**
 	 * Index all markdown files in the vault.
 	 * Also cleans up stale vectors for deleted files.
+	 * @param onProgress Optional callback for progress updates (current, total)
 	 */
-	async indexVault(vaultPath: string, excludeFolders: string[] = []): Promise<IndexStats> {
+	async indexVault(
+		vaultPath: string,
+		excludeFolders: string[] = [],
+		onProgress?: (current: number, total: number) => void
+	): Promise<IndexStats> {
 		const table = await this.getTable(vaultPath);
 		const files = await this.getMarkdownFiles(vaultPath, excludeFolders);
 
@@ -344,12 +349,14 @@ export class VectorService {
 		}
 
 		// Index current files
+		const totalFiles = files.length;
 		let indexedCount = 0;
 		for (const file of files) {
 			try {
 				const content = await fs.readFile(file, 'utf-8');
 				await this.embedFile(file, content, vaultPath);
 				indexedCount++;
+				onProgress?.(indexedCount, totalFiles);
 			} catch (error) {
 				console.error(`Failed to index ${file}:`, error);
 			}

@@ -92,13 +92,21 @@ export default class UmbraPlugin extends Plugin {
 			id: 'index-vault',
 			name: 'Index vault',
 			callback: async () => {
+				new Notice('Indexing vault...');
 				try {
-					new Notice('Indexing vault...');
-					const stats = await this.apiClient.indexVault([]);
+					const stats = await this.apiClient.indexVault(
+						[],
+						(current, total) => {
+							this.statusBarItem.setText(`Umbra: Indexing ${current}/${total}`);
+						}
+					);
+					this.updateStatusBar(true);
 					new Notice(`Indexed ${stats.indexed} files, removed ${stats.removed} stale vectors`);
 				} catch (error) {
+					this.updateStatusBar(false);
+					const message = error instanceof Error ? error.message : 'Unknown error';
 					console.error('Indexing failed:', error);
-					new Notice('Indexing failed - check console');
+					new Notice(`Indexing failed: ${message}`);
 				}
 			}
 		});
