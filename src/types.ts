@@ -19,6 +19,8 @@ export interface NoteVectorQueryResult extends NoteVector {
 export interface SearchResult {
 	path: string;
 	score: number;
+	headerPath: string;
+	startLine: number;
 }
 
 export interface IndexStats {

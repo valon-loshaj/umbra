@@ -1,4 +1,4 @@
-import { App, Modal, TFile, Notice } from 'obsidian';
+import { App, Modal, TFile, Notice, MarkdownView } from 'obsidian';
 import { ApiClient } from '../services/ApiClient';
 import { SearchResult } from '../types';
 
@@ -149,6 +149,16 @@ export class SearchModal extends Modal {
 		// Open the file
 		await leaf.openFile(file);
 
+		// Navigate to line if available
+		if (result.startLine > 0) {
+			const view = this.app.workspace.getActiveViewOfType(MarkdownView);
+			if (view) {
+				const line = result.startLine - 1; // 0-indexed
+				view.editor.setCursor({ line, ch: 0 });
+				view.editor.scrollIntoView({ from: { line, ch: 0 }, to: { line, ch: 0 } }, true);
+			}
+		}
+
 		// Close the modal
 		this.close();
 	}
@@ -208,6 +218,14 @@ export class SearchModal extends Modal {
 				cls: 'umbra-result-path',
 				text: dirname,
 			});
+
+			// Section header (if present)
+			if (result.headerPath) {
+				resultEl.createDiv({
+					cls: 'umbra-result-section',
+					text: result.headerPath,
+				});
+			}
 
 			// Click handler
 			resultEl.addEventListener('click', (evt) => {

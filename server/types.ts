@@ -8,6 +8,10 @@ export interface NoteVector {
 	path: string;
 	content_hash: string;
 	last_updated: number;
+	chunk_index: number;
+	header_path: string;
+	start_line: number;
+	end_line: number;
 	[key: string]: unknown;
 }
 
@@ -19,6 +23,8 @@ export interface NoteVectorQueryResult extends NoteVector {
 export interface SearchResult {
 	path: string;
 	score: number;
+	headerPath: string;
+	startLine: number;
 }
 
 export interface IndexStats {
