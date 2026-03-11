@@ -70,21 +70,36 @@ app.post('/api/search', authenticateToken, async (req, res) => {
         res.status(500).json({ results: [] });
     }
 });
-// Index vault endpoint (auth required)
-app.post('/api/index', authenticateToken, async (req, res) => {
+// Index vault with SSE progress streaming (auth via query param since EventSource doesn't support headers)
+app.get('/api/index/stream', async (req, res) => {
+    // Authenticate via query param (EventSource limitation)
+    const token = req.query.token;
+    if (!token || token !== AUTH_TOKEN) {
+        res.status(401).json({ error: 'Authentication required' });
+        return;
+    }
+    const vaultPath = req.query.vaultPath;
+    const excludeFolders = (req.query.excludeFolders || '').split(',').filter(Boolean);
+    if (!vaultPath) {
+        res.status(400).json({ error: 'vaultPath is required' });
+        return;
+    }
+    // Set SSE headers
+    res.setHeader('Content-Type', 'text/event-stream');
+    res.setHeader('Cache-Control', 'no-cache');
+    res.setHeader('Connection', 'keep-alive');
+    const onProgress = (current, total) => {
+        res.write(`data: ${JSON.stringify({ type: 'progress', current, total })}\n\n`);
+    };
     try {
-        const { vaultPath, excludeFolders = [] } = req.body;
-        if (!vaultPath) {
-            res.status(400).json({ stats: { indexed: 0, removed: 0 } });
-            return;
-        }
-        const stats = await vectorService.indexVault(vaultPath, excludeFolders);
-        res.json({ stats });
+        const stats = await vectorService.indexVault(vaultPath, excludeFolders, onProgress);
+        res.write(`data: ${JSON.stringify({ type: 'complete', stats })}\n\n`);
     }
     catch (error) {
-        console.error('Index error:', error);
-        res.status(500).json({ stats: { indexed: 0, removed: 0 } });
+        const message = error instanceof Error ? error.message : 'Unknown error';
+        res.write(`data: ${JSON.stringify({ type: 'error', message })}\n\n`);
     }
+    res.end();
 });
 // Embed file endpoint (auth required)
 app.post('/api/embed', authenticateToken, async (req, res) => {
