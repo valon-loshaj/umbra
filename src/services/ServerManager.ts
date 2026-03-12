@@ -309,8 +309,16 @@ export class ServerManager {
 
 		// Check if server is already running (silent check - don't log expected failures)
 		if (await this.checkHealth(true)) {
-			console.log('Server is already running');
-			return true;
+			// If we have a token, the server was started by us - all good
+			if (this.authToken) {
+				console.log('Server is already running with our token');
+				return true;
+			}
+			// Server is running but we don't have a token (stale server from previous session)
+			// Need to restart it to get a fresh token
+			console.log('Server is running but we have no token - restarting...');
+			this.stop();
+			await new Promise(resolve => setTimeout(resolve, 1000));
 		}
 
 		this.isStarting = true;
@@ -454,10 +462,34 @@ export class ServerManager {
 			}, 5000);
 
 			this.serverProcess = null;
+		} else {
+			// No process reference - try to kill any process on the port
+			this.killProcessOnPort();
 		}
 
 		// Clear auth token when server stops
 		this.authToken = null;
+	}
+
+	/**
+	 * Kill any process listening on the server port (for stale servers)
+	 */
+	private killProcessOnPort(): void {
+		try {
+			// Find process using lsof and kill it
+			const result = execSync(`lsof -ti:${SERVER_PORT}`, { encoding: 'utf8', timeout: 3000 }).trim();
+			if (result) {
+				const pids = result.split('\n');
+				for (const pid of pids) {
+					if (pid) {
+						console.log(`Killing stale server process: ${pid}`);
+						execSync(`kill -9 ${pid}`, { timeout: 3000 });
+					}
+				}
+			}
+		} catch {
+			// No process found or kill failed - that's ok
+		}
 	}
 
 	/**

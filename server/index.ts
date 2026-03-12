@@ -11,7 +11,18 @@ import {
 	RemoveVectorRequest,
 	RemoveVectorResponse,
 	HealthResponse,
+	LexicalSearchRequest,
+	LexicalSearchResponse,
+	LibrarianProcessRequest,
+	LibrarianProcessResponse,
+	LibrarianApplyRequest,
+	LibrarianApplyResponse,
 } from './types';
+import { LexicalService } from './services/LexicalService';
+import { ArchiveService } from './services/ArchiveService';
+import { AnthropicProvider } from './llm';
+import { LibrarianAgent } from './librarian';
+import fs from 'fs/promises';
 
 const PORT = 37240;
 const VERSION = '0.1.0';
@@ -60,8 +71,10 @@ function authenticateToken(req: Request, res: Response, next: NextFunction) {
 	next();
 }
 
-// Initialize VectorService
+// Initialize services
 const vectorService = new VectorService(DEFAULT_DATA_DIR);
+const lexicalService = new LexicalService();
+const archiveService = new ArchiveService();
 
 // Health check endpoint (no auth required - for monitoring)
 app.get('/api/health', (_req: Request, res: Response<HealthResponse>) => {
@@ -73,7 +86,7 @@ app.get('/api/health', (_req: Request, res: Response<HealthResponse>) => {
 	});
 });
 
-// Search endpoint (auth required)
+// Semantic search endpoint (auth required)
 app.post('/api/search', authenticateToken, async (req: Request<{}, {}, SearchRequest>, res: Response<SearchResponse>) => {
 	try {
 		const { query, limit = 10, vaultPath } = req.body;
@@ -87,6 +100,24 @@ app.post('/api/search', authenticateToken, async (req: Request<{}, {}, SearchReq
 		res.json({ results });
 	} catch (error) {
 		console.error('Search error:', error);
+		res.status(500).json({ results: [] });
+	}
+});
+
+// Lexical search endpoint (auth required)
+app.post('/api/search/lexical', authenticateToken, async (req: Request<{}, {}, LexicalSearchRequest>, res: Response<LexicalSearchResponse>) => {
+	try {
+		const { query, vaultPath, limit = 20, caseSensitive = false } = req.body;
+
+		if (!query || !vaultPath) {
+			res.status(400).json({ results: [] });
+			return;
+		}
+
+		const results = await lexicalService.search(query, vaultPath, limit, caseSensitive);
+		res.json({ results });
+	} catch (error) {
+		console.error('Lexical search error:', error);
 		res.status(500).json({ results: [] });
 	}
 });
@@ -160,6 +191,142 @@ app.delete('/api/vector', authenticateToken, async (req: Request<{}, {}, RemoveV
 	} catch (error) {
 		console.error('Remove vector error:', error);
 		res.status(500).json({ success: false });
+	}
+});
+
+// Librarian: Process daily notes and generate change plan (auth required)
+app.post('/api/librarian/process', authenticateToken, async (req: Request<{}, {}, LibrarianProcessRequest>, res: Response<LibrarianProcessResponse>) => {
+	try {
+		const { vaultPath, dailyNotesFolder, maxNotes, apiKey } = req.body;
+
+		if (!vaultPath || !dailyNotesFolder || !apiKey) {
+			res.status(400).json({ success: false, error: 'Missing required fields' });
+			return;
+		}
+
+		const llm = new AnthropicProvider(apiKey);
+		const agent = new LibrarianAgent(llm, vectorService, lexicalService);
+
+		const result = await agent.process(vaultPath, {
+			dailyNotesFolder,
+			maxNotes,
+		});
+
+		if (result.plan) {
+			res.json({ success: true, plan: result.plan });
+		} else {
+			res.json({ success: false, error: result.error });
+		}
+	} catch (error) {
+		console.error('Librarian process error:', error);
+		const message = error instanceof Error ? error.message : 'Unknown error';
+		res.status(500).json({ success: false, error: message });
+	}
+});
+
+// Librarian: Apply approved changes (auth required)
+app.post('/api/librarian/apply', authenticateToken, async (req: Request<{}, {}, LibrarianApplyRequest>, res: Response<LibrarianApplyResponse>) => {
+	try {
+		const { vaultPath, actions, archiveFolder, notesToArchive } = req.body;
+
+		if (!vaultPath || !actions || !archiveFolder) {
+			res.status(400).json({ success: false, applied: [], archived: [], errors: [] });
+			return;
+		}
+
+		const applied: string[] = [];
+		const errors: { action: string; error: string }[] = [];
+
+		// Apply each action
+		for (const action of actions) {
+			try {
+				const actionPath = action.path || action.toPath || action.fromPath || 'unknown';
+
+				switch (action.type) {
+					case 'create': {
+						if (!action.path || !action.content) break;
+						const absPath = path.join(vaultPath, action.path);
+						await fs.mkdir(path.dirname(absPath), { recursive: true });
+						await fs.writeFile(absPath, action.content, 'utf-8');
+						applied.push(`create: ${action.path}`);
+						break;
+					}
+
+					case 'update': {
+						if (!action.path || !action.content) break;
+						const absPath = path.join(vaultPath, action.path);
+						let existing = '';
+						try {
+							existing = await fs.readFile(absPath, 'utf-8');
+						} catch {
+							// File doesn't exist, create it
+						}
+
+						let newContent: string;
+						if (action.position === 'prepend') {
+							newContent = action.content + '\n\n' + existing;
+						} else if (action.position === 'section' && action.section) {
+							// Find section and insert after it
+							const sectionRegex = new RegExp(`(${action.section}.*?\n)`, 'i');
+							if (sectionRegex.test(existing)) {
+								newContent = existing.replace(sectionRegex, `$1\n${action.content}\n`);
+							} else {
+								newContent = existing + '\n\n' + action.content;
+							}
+						} else {
+							// Default: append
+							newContent = existing + '\n\n' + action.content;
+						}
+
+						await fs.writeFile(absPath, newContent.trim(), 'utf-8');
+						applied.push(`update: ${action.path}`);
+						break;
+					}
+
+					case 'move': {
+						if (!action.fromPath || !action.toPath) break;
+						const fromAbs = path.join(vaultPath, action.fromPath);
+						const toAbs = path.join(vaultPath, action.toPath);
+						await fs.mkdir(path.dirname(toAbs), { recursive: true });
+						await fs.rename(fromAbs, toAbs);
+						applied.push(`move: ${action.fromPath} -> ${action.toPath}`);
+						break;
+					}
+				}
+			} catch (error) {
+				const message = error instanceof Error ? error.message : 'Unknown error';
+				const actionDesc = action.type + ': ' + (action.path || action.fromPath || 'unknown');
+				errors.push({ action: actionDesc, error: message });
+			}
+		}
+
+		// Archive processed notes
+		const archiveResult = await archiveService.archiveNotes(
+			notesToArchive || [],
+			vaultPath,
+			archiveFolder
+		);
+
+		// Add archive errors to the errors list
+		for (const fail of archiveResult.failed) {
+			errors.push({ action: `archive: ${fail.path}`, error: fail.error });
+		}
+
+		res.json({
+			success: errors.length === 0,
+			applied,
+			archived: archiveResult.archived,
+			errors,
+		});
+	} catch (error) {
+		console.error('Librarian apply error:', error);
+		const message = error instanceof Error ? error.message : 'Unknown error';
+		res.status(500).json({
+			success: false,
+			applied: [],
+			archived: [],
+			errors: [{ action: 'apply', error: message }],
+		});
 	}
 });
 

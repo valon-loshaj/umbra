@@ -76,3 +76,70 @@ export interface HealthResponse {
 	version: string;
 	uptime: number;
 }
+
+// Lexical search types
+export interface LexicalSearchRequest {
+	query: string;
+	vaultPath: string;
+	limit?: number;
+	caseSensitive?: boolean;
+}
+
+export interface LexicalSearchResult {
+	path: string;
+	matches: LexicalMatch[];
+}
+
+export interface LexicalMatch {
+	line: number;
+	content: string;
+	column: number;
+}
+
+export interface LexicalSearchResponse {
+	results: LexicalSearchResult[];
+}
+
+// Librarian types
+export interface LibrarianProcessRequest {
+	vaultPath: string;
+	dailyNotesFolder: string;
+	maxNotes?: number;
+	apiKey: string;
+}
+
+export interface LibrarianProcessResponse {
+	success: boolean;
+	plan?: {
+		processedNotes: { path: string; summary: string }[];
+		actions: LibrarianAction[];
+		summary: string;
+		usage: { inputTokens: number; outputTokens: number };
+	};
+	error?: string;
+}
+
+export interface LibrarianAction {
+	type: 'create' | 'update' | 'move';
+	path?: string;
+	fromPath?: string;
+	toPath?: string;
+	content?: string;
+	position?: 'append' | 'prepend' | 'section';
+	section?: string;
+	reason: string;
+}
+
+export interface LibrarianApplyRequest {
+	vaultPath: string;
+	actions: LibrarianAction[];
+	archiveFolder: string;
+	notesToArchive: string[];
+}
+
+export interface LibrarianApplyResponse {
+	success: boolean;
+	applied: string[];
+	archived: string[];
+	errors: { action: string; error: string }[];
+}

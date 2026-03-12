@@ -2,6 +2,8 @@ import { Plugin, Notice, DataAdapter } from 'obsidian';
 import { ApiClient } from './services/ApiClient';
 import { ServerManager } from './services/ServerManager';
 import { SearchModal } from './ui/SearchModal';
+import { LibrarianModal } from './ui/LibrarianModal';
+import { UmbraSettingsTab, UmbraSettings, DEFAULT_SETTINGS } from './ui/SettingsTab';
 
 /**
  * Extended DataAdapter interface for type-safe access to vault path
@@ -43,9 +45,13 @@ export default class UmbraPlugin extends Plugin {
 	serverManager: ServerManager;
 	statusBarItem: HTMLElement;
 	healthCheckInterval: NodeJS.Timeout | null = null;
+	settings: UmbraSettings;
 
 	async onload() {
 		console.log('Loading Umbra plugin');
+
+		// Load settings
+		await this.loadSettings();
 
 		// Get absolute path to vault root and plugin directory with type safety
 		const vaultPath = getVaultPath(this.app.vault.adapter);
@@ -138,6 +144,18 @@ export default class UmbraPlugin extends Plugin {
 			}
 		});
 
+		// Librarian command
+		this.addCommand({
+			id: 'run-librarian',
+			name: 'Run librarian',
+			callback: () => {
+				new LibrarianModal(this.app, this.apiClient, this.settings.librarian).open();
+			}
+		});
+
+		// Register settings tab
+		this.addSettingTab(new UmbraSettingsTab(this.app, this));
+
 		console.log('Umbra plugin loaded successfully');
 	}
 
@@ -184,5 +202,13 @@ export default class UmbraPlugin extends Plugin {
 				console.warn('Umbra server connection lost');
 			}
 		}, 10000);
+	}
+
+	async loadSettings() {
+		this.settings = Object.assign({}, DEFAULT_SETTINGS, await this.loadData());
+	}
+
+	async saveSettings() {
+		await this.saveData(this.settings);
 	}
 }
