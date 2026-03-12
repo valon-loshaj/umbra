@@ -8,6 +8,11 @@ const cors_1 = __importDefault(require("cors"));
 const path_1 = __importDefault(require("path"));
 const os_1 = __importDefault(require("os"));
 const VectorService_1 = require("./services/VectorService");
+const LexicalService_1 = require("./services/LexicalService");
+const ArchiveService_1 = require("./services/ArchiveService");
+const llm_1 = require("./llm");
+const librarian_1 = require("./librarian");
+const promises_1 = __importDefault(require("fs/promises"));
 const PORT = 37240;
 const VERSION = '0.1.0';
 const SERVER_START_TIME = Date.now();
@@ -43,8 +48,10 @@ function authenticateToken(req, res, next) {
     }
     next();
 }
-// Initialize VectorService
+// Initialize services
 const vectorService = new VectorService_1.VectorService(DEFAULT_DATA_DIR);
+const lexicalService = new LexicalService_1.LexicalService();
+const archiveService = new ArchiveService_1.ArchiveService();
 // Health check endpoint (no auth required - for monitoring)
 app.get('/api/health', (_req, res) => {
     const uptime = Date.now() - SERVER_START_TIME;
@@ -54,7 +61,7 @@ app.get('/api/health', (_req, res) => {
         uptime,
     });
 });
-// Search endpoint (auth required)
+// Semantic search endpoint (auth required)
 app.post('/api/search', authenticateToken, async (req, res) => {
     try {
         const { query, limit = 10, vaultPath } = req.body;
@@ -67,6 +74,22 @@ app.post('/api/search', authenticateToken, async (req, res) => {
     }
     catch (error) {
         console.error('Search error:', error);
+        res.status(500).json({ results: [] });
+    }
+});
+// Lexical search endpoint (auth required)
+app.post('/api/search/lexical', authenticateToken, async (req, res) => {
+    try {
+        const { query, vaultPath, limit = 20, caseSensitive = false } = req.body;
+        if (!query || !vaultPath) {
+            res.status(400).json({ results: [] });
+            return;
+        }
+        const results = await lexicalService.search(query, vaultPath, limit, caseSensitive);
+        res.json({ results });
+    }
+    catch (error) {
+        console.error('Lexical search error:', error);
         res.status(500).json({ results: [] });
     }
 });
@@ -131,6 +154,132 @@ app.delete('/api/vector', authenticateToken, async (req, res) => {
     catch (error) {
         console.error('Remove vector error:', error);
         res.status(500).json({ success: false });
+    }
+});
+// Librarian: Process daily notes and generate change plan (auth required)
+app.post('/api/librarian/process', authenticateToken, async (req, res) => {
+    try {
+        const { vaultPath, dailyNotesFolder, maxNotes, apiKey } = req.body;
+        if (!vaultPath || !dailyNotesFolder || !apiKey) {
+            res.status(400).json({ success: false, error: 'Missing required fields' });
+            return;
+        }
+        const llm = new llm_1.AnthropicProvider(apiKey);
+        const agent = new librarian_1.LibrarianAgent(llm, vectorService, lexicalService);
+        const result = await agent.process(vaultPath, {
+            dailyNotesFolder,
+            maxNotes,
+        });
+        if (result.plan) {
+            res.json({ success: true, plan: result.plan });
+        }
+        else {
+            res.json({ success: false, error: result.error });
+        }
+    }
+    catch (error) {
+        console.error('Librarian process error:', error);
+        const message = error instanceof Error ? error.message : 'Unknown error';
+        res.status(500).json({ success: false, error: message });
+    }
+});
+// Librarian: Apply approved changes (auth required)
+app.post('/api/librarian/apply', authenticateToken, async (req, res) => {
+    try {
+        const { vaultPath, actions, archiveFolder, notesToArchive } = req.body;
+        if (!vaultPath || !actions || !archiveFolder) {
+            res.status(400).json({ success: false, applied: [], archived: [], errors: [] });
+            return;
+        }
+        const applied = [];
+        const errors = [];
+        // Apply each action
+        for (const action of actions) {
+            try {
+                const actionPath = action.path || action.toPath || action.fromPath || 'unknown';
+                switch (action.type) {
+                    case 'create': {
+                        if (!action.path || !action.content)
+                            break;
+                        const absPath = path_1.default.join(vaultPath, action.path);
+                        await promises_1.default.mkdir(path_1.default.dirname(absPath), { recursive: true });
+                        await promises_1.default.writeFile(absPath, action.content, 'utf-8');
+                        applied.push(`create: ${action.path}`);
+                        break;
+                    }
+                    case 'update': {
+                        if (!action.path || !action.content)
+                            break;
+                        const absPath = path_1.default.join(vaultPath, action.path);
+                        let existing = '';
+                        try {
+                            existing = await promises_1.default.readFile(absPath, 'utf-8');
+                        }
+                        catch {
+                            // File doesn't exist, create it
+                        }
+                        let newContent;
+                        if (action.position === 'prepend') {
+                            newContent = action.content + '\n\n' + existing;
+                        }
+                        else if (action.position === 'section' && action.section) {
+                            // Find section and insert after it
+                            const sectionRegex = new RegExp(`(${action.section}.*?\n)`, 'i');
+                            if (sectionRegex.test(existing)) {
+                                newContent = existing.replace(sectionRegex, `$1\n${action.content}\n`);
+                            }
+                            else {
+                                newContent = existing + '\n\n' + action.content;
+                            }
+                        }
+                        else {
+                            // Default: append
+                            newContent = existing + '\n\n' + action.content;
+                        }
+                        await promises_1.default.writeFile(absPath, newContent.trim(), 'utf-8');
+                        applied.push(`update: ${action.path}`);
+                        break;
+                    }
+                    case 'move': {
+                        if (!action.fromPath || !action.toPath)
+                            break;
+                        const fromAbs = path_1.default.join(vaultPath, action.fromPath);
+                        const toAbs = path_1.default.join(vaultPath, action.toPath);
+                        await promises_1.default.mkdir(path_1.default.dirname(toAbs), { recursive: true });
+                        await promises_1.default.rename(fromAbs, toAbs);
+                        applied.push(`move: ${action.fromPath} -> ${action.toPath}`);
+                        break;
+                    }
+                }
+            }
+            catch (error) {
+                const message = error instanceof Error ? error.message : 'Unknown error';
+                const actionDesc = action.type + ': ' + (action.path || action.fromPath || 'unknown');
+                errors.push({ action: actionDesc, error: message });
+            }
+        }
+        // Archive processed notes
+        const archiveResult = await archiveService.archiveNotes(notesToArchive || [], vaultPath, archiveFolder);
+        // Add archive errors to the errors list
+        for (const fail of archiveResult.failed) {
+            errors.push({ action: `archive: ${fail.path}`, error: fail.error });
+        }
+        res.json({
+            success: errors.length === 0,
+            applied,
+            archived: archiveResult.archived,
+            errors,
+        });
+    }
+    catch (error) {
+        console.error('Librarian apply error:', error);
+        const message = error instanceof Error ? error.message : 'Unknown error';
+        res.status(500).json({
+            success: false,
+            applied: [],
+            archived: [],
+            errors: [{ action: 'apply', error: message }],
+        });
     }
 });
 // Start server

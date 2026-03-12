@@ -1,4 +1,4 @@
-import { SearchResult, IndexStats } from '../types';
+import { SearchResult, IndexStats, ChangePlan, LibrarianAction, ApplyResult } from '../types';
 import { ServerManager } from './ServerManager';
 
 const SERVER_URL = 'http://localhost:37240';
@@ -176,6 +176,83 @@ export class ApiClient {
 		} catch (error) {
 			console.error('Remove vector failed:', error);
 			return false;
+		}
+	}
+
+	/**
+	 * Process daily notes with the librarian agent
+	 */
+	async librarianProcess(
+		dailyNotesFolder: string,
+		apiKey: string,
+		maxNotes?: number
+	): Promise<{ plan: ChangePlan | null; error?: string }> {
+		try {
+			const response = await fetch(`${SERVER_URL}/api/librarian/process`, {
+				method: 'POST',
+				headers: this.getAuthHeaders(),
+				body: JSON.stringify({
+					vaultPath: this.vaultPath,
+					dailyNotesFolder,
+					maxNotes,
+					apiKey,
+				}),
+			});
+
+			if (!response.ok) {
+				const error = await response.json();
+				return { plan: null, error: error.error || response.statusText };
+			}
+
+			const data = await response.json();
+			if (data.success && data.plan) {
+				return { plan: data.plan };
+			}
+			return { plan: null, error: data.error || 'Unknown error' };
+		} catch (error) {
+			console.error('Librarian process failed:', error);
+			return { plan: null, error: error instanceof Error ? error.message : 'Unknown error' };
+		}
+	}
+
+	/**
+	 * Apply approved librarian changes
+	 */
+	async librarianApply(
+		actions: LibrarianAction[],
+		archiveFolder: string,
+		notesToArchive: string[]
+	): Promise<ApplyResult> {
+		try {
+			const response = await fetch(`${SERVER_URL}/api/librarian/apply`, {
+				method: 'POST',
+				headers: this.getAuthHeaders(),
+				body: JSON.stringify({
+					vaultPath: this.vaultPath,
+					actions,
+					archiveFolder,
+					notesToArchive,
+				}),
+			});
+
+			if (!response.ok) {
+				return {
+					success: false,
+					applied: [],
+					archived: [],
+					errors: [{ action: 'request', error: response.statusText }],
+				};
+			}
+
+			return await response.json();
+		} catch (error) {
+			console.error('Librarian apply failed:', error);
+			return {
+				success: false,
+				applied: [],
+				archived: [],
+				errors: [{ action: 'request', error: error instanceof Error ? error.message : 'Unknown error' }],
+			};
 		}
 	}
 }
